@@ -1,0 +1,72 @@
+{
+  "type": "frame",
+  "width": 1024,
+  "height": 1024,
+  "backgroundColor": "#7dc215",
+  "children": [
+    {
+      "id": "sunburst_bg",
+      "type": "shape",
+      "role": "background_fill",
+      "renderStrategy": "primitive",
+      "x": 0,
+      "y": 0,
+      "width": 1024,
+      "height": 1024,
+      "zIndex": 0,
+      "shape": "rect"
+    },
+    {
+      "id": "headline_text",
+      "type": "text",
+      "role": "headline",
+      "text": "ANTI-PATAH",
+      "x": 40,
+      "y": 28,
+      "width": 944,
+      "height": 115,
+      "zIndex": 2,
+      "fontSize": 105,
+      "fontWeight": "bold",
+      "textAlign": "left",
+      "color": "#e8f5a0"
+    },
+    {
+      "id": "subheadline_text",
+      "type": "text",
+      "role": "tagline",
+      "text": "KUAT DARI AKAR",
+      "x": 40,
+      "y": 140,
+      "width": 944,
+      "height": 75,
+      "zIndex": 2,
+      "fontSize": 62,
+      "fontWeight": "bold",
+      "textAlign": "left",
+      "color": "#e8f5a0"
+    },
+    {
+      "id": "product_bottle",
+      "type": "image",
+      "role": "product",
+      "renderStrategy": "crop",
+      "x": 300,
+      "y": 230,
+      "width": 430,
+      "height": 720,
+      "zIndex": 3,
+      "objectFit": "cover"
+    },
+    {
+      "id": "discount_badge",
+      "type": "image",
+      "role": "cta",
+      "x": 310,
+      "y": 930,
+      "width": 404,
+      "height": 68,
+      "zIndex": 4
+    }
+  ]
+}

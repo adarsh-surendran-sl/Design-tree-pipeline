@@ -1,0 +1,32 @@
+{
+  "name": "design-tree-pipeline-js",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Image → Design Tree pipeline (JavaScript). Includes crop + JS/Playwright renderer + vision compare loop.",
+  "bin": {
+    "design-tree-pipeline-js": "bin/run.js"
+  },
+  "scripts": {
+    "setup": "npm install && npm run setup-browser && npm run setup-remotion",
+    "setup-browser": "npx playwright install chromium",
+    "setup-remotion": "cd remotion && npm install && npm run build",
+    "build:remotion": "cd remotion && npm run build",
+    "ui": "node server.js",
+    "render:png": "node scripts/render-to-png.mjs --help",
+    "run": "node bin/run.js",
+    "test:ad-template": "node bin/test-ad-template.js",
+    "test:ad-template:full": "node bin/test-ad-template.js --full",
+    "test:reconstruction-golden": "node bin/test-reconstruction-golden.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.26.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "multer": "^1.4.5-lts.1",
+    "playwright": "^1.46.0",
+    "sharp": "^0.33.5",
+    "zod": "^3.23.8"
+  }
+}
+

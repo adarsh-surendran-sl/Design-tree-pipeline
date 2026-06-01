@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ad Template Studio</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="has-chat">
+    <header>
+      <h1>Ad Template Studio</h1>
+      <p class="subtitle">
+        Multi-agent ad creation with live progress and an Orchestrator you can chat with anytime.
+      </p>
+      <p id="health" class="health">Checking API…</p>
+      <nav class="nav-links">
+        <a href="/image-to-tree">Image → Design Tree</a>
+      </nav>
+    </header>
+
+    <div class="studio-shell">
+      <section class="panel form-panel">
+        <h2>Product brief</h2>
+        <p class="hint">Product image (upload or URL) and title are required.</p>
+
+        <form id="adForm">
+          <div class="field-group required">
+            <span class="field-label">Product image *</span>
+            <label class="field">
+              <span class="sub-label">Upload file</span>
+              <input type="file" name="productImage" id="productImageFile" accept="image/*" />
+            </label>
+            <p class="field-or">or</p>
+            <label class="field">
+              <span class="sub-label">Image URL</span>
+              <input
+                type="url"
+                name="productImageUrl"
+                id="productImageUrl"
+                placeholder="https://example.com/product.jpg"
+                autocomplete="off"
+              />
+            </label>
+          </div>
+          <label class="field required">
+            <span>Product title *</span>
+            <input type="text" name="title" placeholder="e.g. 12-Piece Cookware Set" required />
+          </label>
+          <label class="field">
+            <span>Tagline</span>
+            <input type="text" name="tagline" />
+          </label>
+          <label class="field">
+            <span>Captions</span>
+            <textarea name="captions" rows="2"></textarea>
+          </label>
+          <label class="field">
+            <span>Hashtags</span>
+            <input type="text" name="hashtags" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Sale price</span>
+              <input type="text" name="salePrice" />
+            </label>
+            <label class="field">
+              <span>Offer price</span>
+              <input type="text" name="offerPrice" />
+            </label>
+            <label class="field">
+              <span>Discount</span>
+              <input type="text" name="discount" />
+            </label>
+            <label class="field">
+              <span>Star rating</span>
+              <input
+                type="number"
+                name="rating"
+                min="0"
+                max="5"
+                step="0.5"
+                placeholder="e.g. 4.5"
+              />
+              <span class="field-hint">Optional — number from 0 to 5 (half stars OK)</span>
+            </label>
+          </div>
+          <div class="field-group">
+            <span class="field-label">Logo <span class="field-hint">(optional)</span></span>
+            <label class="field">
+              <span class="sub-label">Upload file</span>
+              <input type="file" name="logo" id="logoFile" accept="image/*" />
+            </label>
+            <p class="field-or">or</p>
+            <label class="field">
+              <span class="sub-label">Image URL</span>
+              <input
+                type="url"
+                name="logoImageUrl"
+                id="logoImageUrl"
+                placeholder="https://example.com/logo.png"
+                autocomplete="off"
+              />
+            </label>
+          </div>
+
+          <label class="field checkbox" for="removeBackground">
+            <input type="checkbox" name="removeBackground" value="true" id="removeBackground" />
+            <span>Remove background from product &amp; logo <span class="field-hint">(Shopalyst MCP)</span></span>
+          </label>
+          <p id="removeBgHint" class="field-hint remove-bg-hint hidden"></p>
+          <label class="field">
+            <span>Reference ad</span>
+            <input type="file" name="referenceImage" accept="image/*" />
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Language</span>
+              <input type="text" name="language" />
+            </label>
+            <label class="field">
+              <span>Category</span>
+              <input type="text" name="category" />
+            </label>
+          </div>
+          <label class="field">
+            <span>Custom design direction</span>
+            <textarea name="customPrompt" rows="2"></textarea>
+          </label>
+          <label class="field">
+            <span>Target audience</span>
+            <textarea name="audienceDetails" rows="2"></textarea>
+          </label>
+          <label class="field">
+            <span>Merchant info</span>
+            <textarea name="merchantInfo" rows="2" placeholder="Brand/store details, USPs, shipping, return policy (optional)"></textarea>
+          </label>
+          <label class="field">
+            <span>Marketplace product page URL</span>
+            <input type="url" name="productPageUrl" placeholder="https://www.amazon.in/... (optional)" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Demography</span>
+            <input type="text" name="demography" />
+          </label>
+          <label class="field">
+            <span>Posting timeline</span>
+            <input type="text" name="postingTimeline" />
+          </label>
+          <label class="field">
+            <span>Aspect ratio</span>
+            <select name="frameFormat" id="frameFormat">
+              <option value="1:1" selected>Square 1:1 (1080×1080)</option>
+              <option value="4:5">Portrait 4:5 (1080×1350)</option>
+              <option value="9:16">Story 9:16 (1080×1920)</option>
+              <option value="16:9">Landscape 16:9 (1920×1080)</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Generate concepts</span>
+              <select name="generateCount" id="generateCount">
+                <option value="6" selected>6 (recommended)</option>
+                <option value="8">8</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Show top</span>
+              <select name="outputCount" id="outputCount">
+                <option value="4" selected>4</option>
+                <option value="3">3</option>
+                <option value="2">2</option>
+              </select>
+            </label>
+          </div>
+          <label class="field checkbox" for="layoutPolish">
+            <input type="checkbox" name="layoutPolish" value="true" id="layoutPolish" checked />
+            <span>Layout polish pass <span class="field-hint">(vision QA after render)</span></span>
+          </label>
+          <label class="field checkbox" for="highQuality">
+            <input type="checkbox" name="highQuality" value="true" id="highQuality" checked />
+            <span>High-accuracy polish <span class="field-hint">(extra vision pass)</span></span>
+          </label>
+          <button type="submit" class="primary" id="submitBtn">Generate ad templates</button>
+          <div id="pipelineResumeBar" class="pipeline-resume hidden">
+            <p id="pipelineErrorMsg" class="pipeline-error-msg"></p>
+            <button type="button" class="secondary" id="resumePipelineBtn">Resume pipeline</button>
+          </div>
+        </form>
+
+        <div id="agentStatus" class="agent-status hidden">
+          <h3>Pipeline status</h3>
+          <div class="agent-steps">
+            <div class="agent-step" data-phase="analysis">
+              <span class="step-icon">1</span>
+              <div>
+                <strong>Product Analyst</strong>
+                <p class="step-desc">Market & competitor research</p>
+                <p class="step-msg"></p>
+              </div>
+            </div>
+            <div class="agent-step" data-phase="design">
+              <span class="step-icon">2</span>
+              <div>
+                <strong>Design Strategist</strong>
+                <p class="step-desc">Strategy + 4 concepts</p>
+                <p class="step-msg"></p>
+              </div>
+            </div>
+            <div class="agent-step" data-phase="render">
+              <span class="step-icon">3</span>
+              <div>
+                <strong>Renderer</strong>
+                <p class="step-desc">Previews</p>
+                <p class="step-msg"></p>
+              </div>
+            </div>
+          </div>
+          <ul id="log" class="log"></ul>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <div class="agent-reports">
+          <article id="reportAnalyst" class="agent-report hidden">
+            <header>
+              <span class="agent-badge analyst">Product Analyst</span>
+              <span class="report-status" id="reportAnalystStatus">Waiting…</span>
+            </header>
+            <div class="report-body" id="reportAnalystBody"></div>
+          </article>
+
+          <article id="reportStrategist" class="agent-report hidden">
+            <header>
+              <span class="agent-badge strategist">Design Strategist</span>
+              <span class="report-status" id="reportStrategistStatus">Waiting…</span>
+            </header>
+            <div class="report-body" id="reportStrategistBody"></div>
+          </article>
+        </div>
+
+        <section class="panel results-panel">
+          <h2>Design previews</h2>
+          <div id="resultsPlaceholder" class="placeholder">
+            Submit a brief to start. Agent reports appear above; chat with the Orchestrator anytime →
+          </div>
+          <div id="designsPanel" class="hidden">
+            <h3>4 concepts <span class="badge-remotion">Remotion</span></h3>
+            <div id="remotionRoot" class="design-grid"></div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="panel chat-panel" aria-label="Orchestrator chat">
+        <header class="chat-header">
+          <div>
+            <h2>Orchestrator</h2>
+            <p class="chat-sub">Coordinates all agents · edit designs via chat</p>
+          </div>
+          <span id="chatJobBadge" class="chat-job-badge hidden"></span>
+        </header>
+        <div id="chatMessages" class="chat-messages"></div>
+        <form id="chatForm" class="chat-form">
+          <textarea
+            id="chatInput"
+            rows="2"
+            placeholder="Ask about analysis, strategy, or say: Make design_2 headline red…"
+          ></textarea>
+          <button type="submit" class="primary" id="chatSendBtn">Send</button>
+        </form>
+      </aside>
+    </div>
+
+    <dialog id="templateModal" class="tree-modal template-modal">
+      <form id="templateForm" class="tree-modal-inner">
+        <header class="tree-modal-header">
+          <div>
+            <h3 id="templateModalTitle">Customize template</h3>
+            <p id="templateModalSubtitle" class="template-modal-sub">Swap product, copy, and colors — then re-render</p>
+          </div>
+          <button type="button" class="btn-close" id="templateModalClose" aria-label="Close">×</button>
+        </header>
+        <div class="template-modal-split">
+          <div id="templateModalBody" class="template-modal-body template-modal-form">
+            <p class="hint">Loading layers…</p>
+          </div>
+          <aside class="template-modal-preview" aria-label="Live preview">
+            <p class="template-preview-label">Live preview</p>
+            <div id="templatePreviewRoot" class="template-preview-root">
+              <p class="hint">Preview loads with design…</p>
+            </div>
+          </aside>
+        </div>
+        <footer class="tree-modal-footer template-modal-footer">
+          <button type="button" class="secondary" id="templateResetBtn">Reset form</button>
+          <button type="submit" class="primary" id="templateApplyBtn">Apply &amp; re-render</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="treeModal" class="tree-modal">
+      <form method="dialog" class="tree-modal-inner">
+        <header class="tree-modal-header">
+          <h3 id="treeModalTitle">Design tree</h3>
+          <button type="submit" class="btn-close" aria-label="Close">×</button>
+        </header>
+        <pre id="treeModalContent" class="tree-modal-content"></pre>
+        <footer class="tree-modal-footer">
+          <button type="button" class="secondary" id="treeCopyBtn">Copy JSON</button>
+          <button type="submit" class="primary">Close</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script type="module" src="/ad-template.js"></script>
+  </body>
+</html>
