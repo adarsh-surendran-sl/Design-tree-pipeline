@@ -196,7 +196,11 @@ export async function renderWithOverrides({
 
   let updated = applyUserOverrides(tree, overrides)
   updated = fixReconstructionLayout(updated)
-  updated = enhanceReconstructionTree(updated)
+  updated = enhanceReconstructionTree(updated, {
+    skipBackgroundPresets: true,
+    skipReambiguous: true,
+    respectRenderChoices: true,
+  })
   updated = sanitizeTreeComposition(updated)
 
   let originalPath = originalImagePath

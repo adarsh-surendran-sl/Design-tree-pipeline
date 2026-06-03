@@ -31,6 +31,14 @@ import {
 } from './src/jobState.js'
 import { applyTemplateToDesign, getTemplatePropsForDesign } from './src/applyTemplateToDesign.js'
 import { parseStarRating } from './src/briefRating.js'
+import {
+  getEditorMeta,
+  patchEditorTree,
+  confirmEditorTree,
+  rerenderEditorTree,
+  loadEditorTree,
+} from './src/designTreeEditor.js'
+import { parseDesignTree } from './src/schemas.js'
 
 loadEnv()
 
@@ -57,6 +65,10 @@ app.use('/runs', express.static(RUNS_DIR))
 
 app.get('/image-to-tree', (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'image-to-tree', 'index.html'))
+})
+
+app.get('/editor', (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'design-tree-editor', 'editor.html'))
 })
 
 function safeStem(name) {
@@ -239,6 +251,135 @@ app.get('/api/jobs/:jobId/tree', (req, res) => {
   const tree = JSON.parse(fs.readFileSync(treePath, 'utf8'))
   res.json({ jobId, tree, elements: describeElements(tree) })
 })
+
+function parseTreeBody(req) {
+  if (req.body?.tree) {
+    return typeof req.body.tree === 'string' ? JSON.parse(req.body.tree) : req.body.tree
+  }
+  return null
+}
+
+async function editorRerenderHandler(req, res, jobDir, designId = null) {
+  try {
+    let tree = parseTreeBody(req)
+    if (!tree) {
+      const loaded = loadEditorTree(jobDir, designId)
+      tree = loaded.tree
+    } else {
+      tree = parseDesignTree(tree)
+    }
+
+    const result = await rerenderEditorTree(jobDir, tree, designId, {
+      uploadedFiles: req.files || [],
+    })
+    res.json(result)
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+}
+
+app.get('/api/jobs/:jobId/editor-meta', (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  try {
+    res.json(getEditorMeta(jobDir))
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+app.patch('/api/jobs/:jobId/tree', (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  try {
+    const raw = parseTreeBody(req)
+    if (!raw) {
+      res.status(400).json({ error: 'Missing tree in body' })
+      return
+    }
+    const tree = parseDesignTree(raw)
+    const result = patchEditorTree(jobDir, tree)
+    res.json({ jobId: req.params.jobId, tree, assetsBaseUrl: result.assetsBaseUrl })
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+app.post('/api/jobs/:jobId/editor-rerender', upload.any(), (req, res) => {
+  editorRerenderHandler(req, res, path.join(RUNS_DIR, req.params.jobId))
+})
+
+app.post('/api/jobs/:jobId/confirm', upload.any(), async (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  try {
+    const raw = parseTreeBody(req)
+    if (!raw) {
+      res.status(400).json({ error: 'Missing tree in body' })
+      return
+    }
+    const tree = parseDesignTree(raw)
+    const result = await confirmEditorTree(jobDir, tree, null, { uploadedFiles: req.files || [] })
+    res.json(result)
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+app.get('/api/ad-template/jobs/:jobId/designs/:designId/editor-meta', (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  try {
+    const brief = loadJsonSafeBrief(jobDir)
+    res.json(getEditorMeta(jobDir, req.params.designId, brief))
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+app.patch('/api/ad-template/jobs/:jobId/designs/:designId/tree', (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  const { designId } = req.params
+  try {
+    const raw = parseTreeBody(req)
+    if (!raw) {
+      res.status(400).json({ error: 'Missing tree in body' })
+      return
+    }
+    const tree = parseDesignTree(raw)
+    const result = patchEditorTree(jobDir, tree, designId)
+    res.json({ jobId: req.params.jobId, designId, tree, assetsBaseUrl: result.assetsBaseUrl })
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+app.post('/api/ad-template/jobs/:jobId/designs/:designId/editor-rerender', upload.any(), (req, res) => {
+  editorRerenderHandler(req, res, path.join(RUNS_DIR, req.params.jobId), req.params.designId)
+})
+
+app.post('/api/ad-template/jobs/:jobId/designs/:designId/confirm', upload.any(), async (req, res) => {
+  const jobDir = path.join(RUNS_DIR, req.params.jobId)
+  const { designId } = req.params
+  try {
+    const raw = parseTreeBody(req)
+    if (!raw) {
+      res.status(400).json({ error: 'Missing tree in body' })
+      return
+    }
+    const tree = parseDesignTree(raw)
+    const result = await confirmEditorTree(jobDir, tree, designId, { uploadedFiles: req.files || [] })
+    res.json(result)
+  } catch (e) {
+    res.status(e.message?.includes('not found') ? 404 : 500).json({ error: e.message || String(e) })
+  }
+})
+
+function loadJsonSafeBrief(jobDir) {
+  const p = path.join(jobDir, 'brief.json')
+  if (!fs.existsSync(p)) return null
+  try {
+    return JSON.parse(fs.readFileSync(p, 'utf8'))
+  } catch {
+    return null
+  }
+}
 
 function parseBriefBody(body) {
   const frameFormat = String(body?.frameFormat || body?.aspectRatio || '1:1').trim()
@@ -817,5 +958,6 @@ const port = Number(process.env.PORT || 8787)
 app.listen(port, () => {
   console.log(`Ad Template Studio: http://localhost:${port}`)
   console.log(`Image → Design Tree: http://localhost:${port}/image-to-tree`)
+  console.log(`Visual editor: http://localhost:${port}/editor?jobId=…`)
   console.log(`Runs folder: ${RUNS_DIR}`)
 })

@@ -17,12 +17,14 @@
     "run": "node bin/run.js",
     "test:ad-template": "node bin/test-ad-template.js",
     "test:ad-template:full": "node bin/test-ad-template.js --full",
-    "test:reconstruction-golden": "node bin/test-reconstruction-golden.js"
+    "test:reconstruction-golden": "node bin/test-reconstruction-golden.js",
+    "test:design-tree-editor": "node bin/test-design-tree-editor.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.26.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "moveable": "^0.53.0",
     "multer": "^1.4.5-lts.1",
     "playwright": "^1.46.0",
     "sharp": "^0.33.5",

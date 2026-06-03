@@ -3,7 +3,14 @@
     {
       "id": "dove-1x1",
       "tree": "dove-1x1/tree.json",
-      "description": "Dove shampoo square ad — typography, sunburst, product alignment"
+      "description": "Dove shampoo square ad — typography, sunburst, product alignment",
+      "expectPatternedBg": true
+    },
+    {
+      "id": "clear-flat",
+      "tree": "clear-flat/tree.json",
+      "description": "Flat teal background — must NOT inject sunburst",
+      "expectPatternedBg": false
     }
   ]
 }

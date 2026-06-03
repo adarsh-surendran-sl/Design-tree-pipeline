@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Design Tree Visual Editor</title>
+    <link rel="stylesheet" href="/design-tree-editor/editor.css" />
+  </head>
+  <body>
+    <header class="editor-header">
+      <div class="editor-header-left">
+        <a id="backLink" href="/image-to-tree" class="back-link">← Back</a>
+        <h1>Visual editor</h1>
+        <p id="editorSubtitle" class="subtitle"></p>
+      </div>
+      <div class="editor-header-actions">
+        <button type="button" id="undoBtn" class="secondary" title="Undo" disabled>Undo</button>
+        <button type="button" id="redoBtn" class="secondary" title="Redo" disabled>Redo</button>
+        <button type="button" id="saveBtn" class="secondary">Save</button>
+        <button type="button" id="confirmBtn" class="primary">Confirm &amp; export</button>
+      </div>
+    </header>
+
+    <div id="editorError" class="editor-error hidden"></div>
+
+    <main class="editor-layout">
+      <aside class="panel layers-panel">
+        <h2>Layers</h2>
+        <ul id="layersList" class="layers-list"></ul>
+        <div class="layer-actions">
+          <button type="button" id="layerUpBtn" class="secondary small" disabled>↑ Front</button>
+          <button type="button" id="layerDownBtn" class="secondary small" disabled>↓ Back</button>
+        </div>
+        <h3>Frame</h3>
+        <label class="field">
+          <span>Background</span>
+          <input type="color" id="frameBg" />
+        </label>
+      </aside>
+
+      <section class="stage-panel">
+        <div class="stage-toolbar">
+          <button type="button" id="zoomOutBtn" class="secondary small">−</button>
+          <span id="zoomLabel">100%</span>
+          <button type="button" id="zoomInBtn" class="secondary small">+</button>
+          <button type="button" id="zoomFitBtn" class="secondary small">Fit</button>
+        </div>
+        <div id="stageViewport" class="stage-viewport">
+          <div id="stagePan" class="stage-pan">
+            <div id="stageScale" class="stage-scale">
+              <div id="designFrame" class="design-frame"></div>
+            </div>
+          </div>
+        </div>
+        <div class="preview-strip">
+          <span>Server preview</span>
+          <img id="serverPreview" alt="Playwright render preview" />
+        </div>
+      </section>
+
+      <aside class="panel props-panel">
+        <h2>Properties</h2>
+        <p id="propsEmpty" class="hint">Select a layer</p>
+        <form id="propsForm" class="props-form hidden"></form>
+      </aside>
+    </main>
+
+    <p id="statusBar" class="status-bar">Loading…</p>
+
+    <script type="module" src="/design-tree-editor/editor.js"></script>
+  </body>
+</html>

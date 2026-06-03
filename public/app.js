@@ -26,6 +26,7 @@ const overlayOpacityWrap = document.getElementById('overlayOpacityWrap')
 const compareRoot = document.getElementById('compareRoot')
 const reconstructionScoreEl = document.getElementById('reconstructionScore')
 const exportLayersBtn = document.getElementById('exportLayersBtn')
+const visualEditorBtn = document.getElementById('visualEditorBtn')
 
 let selectedFile = null
 let objectUrl = null
@@ -267,6 +268,10 @@ async function handleDone(evt) {
   if (currentTree) setCompareAspectRatio(currentTree)
   renderElementEditor(currentElements)
   rerenderBtn.hidden = !currentJobId
+  if (visualEditorBtn && currentJobId) {
+    visualEditorBtn.href = `/editor?jobId=${encodeURIComponent(currentJobId)}&return=${encodeURIComponent('/image-to-tree')}`
+    visualEditorBtn.classList.remove('hidden')
+  }
 
   if (!currentElements.length) {
     setStatus('Done, but no layers were identified. Check Design tree JSON below or re-run.')

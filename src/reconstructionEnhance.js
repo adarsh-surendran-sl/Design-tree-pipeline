@@ -1,4 +1,4 @@
-import { applyBackgroundPresets } from './backgroundPresets.js'
+import { applyBackgroundPresets, treeHasPatternedBackground } from './backgroundPresets.js'
 import { RASTER_TYPES } from './capabilities.js'
 
 const HEADLINE_FONT = 'Barlow Condensed, sans-serif'
@@ -89,7 +89,7 @@ export function applyReconstructionTypography(tree) {
     if (i === 1 && headlines[0]?.fontSize) {
       node.fontSize = Math.round(headlines[0].fontSize * 0.58)
     }
-    node.color = node.color || '#f0f8d8'
+    if (!node.color) node.color = '#111111'
   }
 
   for (const node of updated.children || []) {
@@ -203,19 +203,27 @@ export function ensureBackgroundRenderOptions(tree) {
  * Run all deterministic reconstruction enhancements (no LLM).
  */
 export function enhanceReconstructionTree(tree, options = {}) {
-  const { skipReambiguous = false, respectRenderChoices = false } = options
+  const {
+    skipReambiguous = false,
+    respectRenderChoices = false,
+    skipBackgroundPresets = false,
+  } = options
   let t = JSON.parse(JSON.stringify(tree))
   t = removeNarrowBackgroundPanels(t)
-  if (!respectRenderChoices) {
-    t = applyBackgroundPresets(t, { presetId: options.backgroundPreset || 'sunburst_lime' })
-  } else {
+
+  const shouldApplyPresets =
+    !skipBackgroundPresets && treeHasPatternedBackground(t)
+  if (shouldApplyPresets) {
+    const skipNodeIds = respectRenderChoices
+      ? new Set(
+          (t.children || [])
+            .filter((n) => n.renderChoiceResolved === 'crop' || n.renderChoice === 'crop')
+            .map((n) => n.id),
+        )
+      : new Set()
     t = applyBackgroundPresets(t, {
       presetId: options.backgroundPreset || 'sunburst_lime',
-      skipNodeIds: new Set(
-        (t.children || [])
-          .filter((n) => n.renderChoiceResolved === 'crop' || n.renderChoice === 'crop')
-          .map((n) => n.id),
-      ),
+      skipNodeIds,
     })
   }
   t = convertCtaRasterToButton(t)

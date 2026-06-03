@@ -71,7 +71,7 @@ export async function runPostRenderQualityPass({
         const { applyPatchesSafe } = await import('./patchUtils.js')
         updated = applyPatchesSafe(updated, targeted)
         updated = fixReconstructionLayout(updated)
-        updated = enhanceReconstructionTree(updated)
+        updated = enhanceReconstructionTree(updated, { skipBackgroundPresets: true, skipReambiguous: true })
       }
     }
 

@@ -41,6 +41,19 @@ Progress and renders stream live; outputs are saved under `runs/<jobId>/`.
 - **UI**: overlay mode, per-layer x/y/w/h nudges, layer reference export (`layers_reference.md` in job folder)
 - **Tests**: `npm run test:reconstruction-golden`
 
+### Visual editor (Canva-style)
+
+After a job finishes (Image → Tree or Ad Template Studio customize), open the **visual layer editor**:
+
+- Image → Tree: **Open visual editor** on the results panel, or `/editor?jobId=<id>`
+- Ad Template Studio: **Visual editor** in the customize modal, or `/editor?jobId=<id>&designId=<id>`
+
+Edit layers on canvas (move, resize, text, colors, z-order). Changes save to the same Design Tree JSON (`design_tree_final.json` or `designs/<id>/design_tree.json`). **Confirm & export** writes `design_tree_confirmed.json` and re-renders the final PNG via Playwright.
+
+APIs: `PATCH …/tree`, `POST …/editor-rerender`, `POST …/confirm` (job-scoped and ad-template design-scoped).
+
+Tests: `npm run test:design-tree-editor`
+
 ## CLI
 
 ```bash

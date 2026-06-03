@@ -41,6 +41,7 @@ const templateModalClose = document.getElementById('templateModalClose')
 const templateApplyBtn = document.getElementById('templateApplyBtn')
 const templateResetBtn = document.getElementById('templateResetBtn')
 const templatePreviewRoot = document.getElementById('templatePreviewRoot')
+const templateVisualEditorBtn = document.getElementById('templateVisualEditorBtn')
 
 const ORCHESTRATOR_WELCOME =
   "Hi! I'm your **Orchestrator**. I coordinate the Product Analyst, Design Strategist, and renderer.\n\n" +
@@ -455,6 +456,11 @@ async function openTemplateModal(designId, designName) {
     templatePreviewRoot.innerHTML = '<p class="hint">Loading preview…</p>'
   }
   templateModal.showModal()
+  if (templateVisualEditorBtn) {
+    const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
+    templateVisualEditorBtn.href = `/editor?jobId=${encodeURIComponent(currentJobId)}&designId=${encodeURIComponent(designId)}&return=${returnTo}`
+    templateVisualEditorBtn.classList.remove('hidden')
+  }
 
   try {
     const r = await fetch(`/api/ad-template/jobs/${currentJobId}/designs/${designId}/template-props`)

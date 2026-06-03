@@ -41,9 +41,23 @@ function isBackgroundNode(node) {
   )
 }
 
-function looksLikeSunburst(node) {
+export function looksLikeSunburst(node) {
   const bg = String(node.cssBackground || '').toLowerCase()
   return bg.includes('conic') || bg.includes('sunburst') || bg.includes('ray')
+}
+
+/** True when the tree already models a patterned / CSS background (not a flat fill-only ad). */
+export function treeHasPatternedBackground(tree) {
+  return (tree.children || []).some((node) => {
+    if (node.backgroundPreset) return true
+    if (looksLikeSunburst(node)) return true
+    const role = (node.role || '').toLowerCase()
+    if (role !== 'background_fill') return false
+    if (node.renderOptions?.css) return true
+    if (node.cssBackground && String(node.cssBackground).trim()) return true
+    const id = String(node.id || '').toLowerCase()
+    return id.includes('sunburst') || id.includes('rays') || id.includes('pattern')
+  })
 }
 
 function inferColors(tree, node) {
@@ -62,39 +76,35 @@ function shadeHex(hex, amount) {
   return `#${[f(r), f(g), f(b)].map((x) => x.toString(16).padStart(2, '0')).join('')}`
 }
 
-/** Apply or upgrade background layers with preset CSS. */
+/**
+ * Upgrade existing patterned background layers with preset CSS.
+ * Does NOT invent a sunburst when the tree has no patterned background (flat-color ads stay flat).
+ */
 export function applyBackgroundPresets(tree, { presetId = 'sunburst_lime', skipNodeIds = new Set() } = {}) {
   const updated = JSON.parse(JSON.stringify(tree))
+  if (!treeHasPatternedBackground(updated)) return updated
+
   const preset = BACKGROUND_PRESETS[presetId] || BACKGROUND_PRESETS.sunburst_lime
   const frameW = updated.width ?? 1080
   const frameH = updated.height ?? 1080
   const colors = inferColors(updated, {})
 
-  let bgNode = (updated.children || []).find(
-    (n) => isBackgroundNode(n) && n.type === 'shape' && !skipNodeIds.has(n.id),
-  )
-
-  if (!bgNode) {
-    bgNode = {
-      id: 'background_sunburst',
-      type: 'shape',
-      role: 'background_fill',
-      renderStrategy: 'primitive',
-      shape: 'rect',
-      x: 0,
-      y: 0,
-      width: frameW,
-      height: frameH,
-      zIndex: 0,
-    }
-    updated.children = [bgNode, ...(updated.children || [])]
-  }
-
   for (const node of updated.children || []) {
     if (skipNodeIds.has(node.id)) continue
     if (node.renderChoiceResolved === 'crop' || node.renderChoice === 'crop') continue
-    if (!isBackgroundNode(node) && node.type !== 'shape') continue
+
     if (!isBackgroundNode(node) && !looksLikeSunburst(node)) continue
+    const id = String(node.id || '').toLowerCase()
+    const namedPattern =
+      id.includes('sunburst') || id.includes('rays') || id.includes('pattern')
+    if (
+      !looksLikeSunburst(node) &&
+      !node.backgroundPreset &&
+      !node.renderOptions?.css &&
+      !namedPattern
+    ) {
+      continue
+    }
     if ((node.width ?? 0) < frameW * 0.5 && (node.height ?? 0) < frameH * 0.5) continue
 
     node.type = 'shape'
@@ -106,8 +116,10 @@ export function applyBackgroundPresets(tree, { presetId = 'sunburst_lime', skipN
     node.width = frameW
     node.height = frameH
     node.zIndex = Math.min(node.zIndex ?? 0, 2)
-    node.cssBackground = preset.css(colors.c1, colors.c2)
-    node.backgroundPreset = preset.id
+    if (!node.cssBackground || !looksLikeSunburst(node)) {
+      node.cssBackground = preset.css(colors.c1, colors.c2)
+      node.backgroundPreset = preset.id
+    }
     delete node.gradientFrom
     delete node.gradientTo
   }

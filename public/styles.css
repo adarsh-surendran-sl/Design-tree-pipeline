@@ -1176,6 +1176,22 @@ code {
   color: var(--text);
 }
 
+a.editor-link {
+  display: inline-block;
+  text-decoration: none;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+a.editor-link.hidden {
+  display: none !important;
+}
+
+.template-modal-footer .editor-link {
+  margin-right: auto;
+  margin-bottom: 0;
+}
+
 .hidden {
   display: none !important;
 }

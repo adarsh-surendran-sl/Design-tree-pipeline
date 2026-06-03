@@ -127,6 +127,8 @@ Rules:
 13. shape polygon + points[] for flat diagonal panels; gradientFrom/gradientTo for simple two-color linear gradients; cssBackground for conic/radial/repeating patterns (prefer repeating-conic-gradient for sunburst rays, full frame, zIndex 0–1).
 14. renderChoice "css"|"crop"|"ambiguous". If ambiguous, include renderOptions: {"css":{...node fields...},"crop":{...}} with same id/bbox. Use ambiguous when unsure if CSS can match the original.
 15. Do NOT add a narrow vertical panel behind the product unless the original clearly has one — use one full-frame background layer.
+16. Describe ONLY what appears in the uploaded image — never add logos, products, or backgrounds from other ads or brands.
+17. Match background style to THIS image: flat solid color → frame backgroundColor only (no sunburst); radial rays / stripes → shape + cssBackground with colors sampled from the image (not generic lime green).
 
 Schema:
 {"type":"frame","width":W,"height":H,"backgroundColor":"#hex","children":[

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url'
 
 import { enhanceReconstructionTree } from '../src/reconstructionEnhance.js'
 import { fixReconstructionLayout } from '../src/reconstructionLayout.js'
-import { applyBackgroundPresets } from '../src/backgroundPresets.js'
+import { applyBackgroundPresets, treeHasPatternedBackground } from '../src/backgroundPresets.js'
 import { exportLayersReference } from '../src/layerExport.js'
 import { scoreReconstruction } from '../src/reconstructionScore.js'
 
@@ -30,34 +30,52 @@ async function run() {
   let passed = 0
 
   for (const c of manifest.cases) {
+    const expectPatterned = c.expectPatternedBg === true
     const tree = loadCase(c)
     let t = enhanceReconstructionTree(tree)
     t = fixReconstructionLayout(t)
 
-    const headline = t.children.find((n) => n.id === 'headline_text')
-    assert(headline?.textAlign === 'center', `${c.id}: headline must be centered`)
-    assert(
-      headline?.fontFamily?.includes('Barlow'),
-      `${c.id}: headline should use Barlow Condensed`,
-    )
+    if (expectPatterned) {
+      const headline = t.children.find((n) => n.id === 'headline_text')
+      assert(headline?.textAlign === 'center', `${c.id}: headline must be centered`)
+      assert(
+        headline?.fontFamily?.includes('Barlow'),
+        `${c.id}: headline should use Barlow Condensed`,
+      )
 
-    const product = t.children.find((n) => n.id === 'product_bottle')
-    assert(product?.objectFit === 'contain', `${c.id}: product objectFit must be contain`)
+      const product = t.children.find((n) => n.id === 'product_bottle')
+      assert(product?.objectFit === 'contain', `${c.id}: product objectFit must be contain`)
 
-    const cta = t.children.find((n) => n.role === 'cta' || n.type === 'button')
-    assert(cta?.type === 'button', `${c.id}: discount strip should become button`)
+      const cta = t.children.find((n) => n.role === 'cta' || n.type === 'button')
+      assert(cta?.type === 'button', `${c.id}: discount strip should become button`)
+    } else {
+      const product = t.children.find((n) => n.role === 'product' || n.id === 'product')
+      assert(product?.objectFit === 'contain', `${c.id}: product objectFit must be contain`)
+    }
 
-    const bg = t.children.find((n) => n.role === 'background_fill' || n.id.includes('sunburst'))
-    assert(bg?.cssBackground?.includes('conic'), `${c.id}: background needs conic/sunburst css`)
+    const bg = t.children.find((n) => n.role === 'background_fill' || String(n.id).includes('sunburst'))
+    if (expectPatterned) {
+      assert(bg?.cssBackground?.includes('conic'), `${c.id}: background needs conic/sunburst css`)
+    } else {
+      assert(!t.children.some((n) => String(n.cssBackground || '').includes('conic')), `${c.id}: must not inject sunburst`)
+      assert(!t.children.some((n) => n.id === 'background_sunburst'), `${c.id}: must not add background_sunburst layer`)
+    }
 
     const layers = exportLayersReference(t)
-    assert(layers.layers.length >= 4, `${c.id}: layer export count`)
+    assert(layers.layers.length >= 2, `${c.id}: layer export count`)
 
-    const withPreset = applyBackgroundPresets(tree)
-    assert(
-      withPreset.children.some((n) => n.backgroundPreset),
-      `${c.id}: background preset applied`,
-    )
+    if (expectPatterned) {
+      const withPreset = applyBackgroundPresets(tree)
+      assert(
+        withPreset.children.some((n) => n.backgroundPreset || String(n.cssBackground || '').includes('conic')),
+        `${c.id}: background preset applied`,
+      )
+      assert(treeHasPatternedBackground(tree), `${c.id}: patterned bg detected`)
+    } else {
+      assert(!treeHasPatternedBackground(tree), `${c.id}: flat tree must not be patterned`)
+      const withPreset = applyBackgroundPresets(tree)
+      assert(!withPreset.children.some((n) => n.id === 'background_sunburst'), `${c.id}: preset must not invent sunburst`)
+    }
 
     console.log(`✓ ${c.id}`)
     passed += 1

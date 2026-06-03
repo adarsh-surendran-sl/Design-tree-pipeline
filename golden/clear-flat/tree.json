@@ -1,0 +1,31 @@
+{
+  "type": "frame",
+  "width": 1080,
+  "height": 1080,
+  "backgroundColor": "#b8e8e8",
+  "children": [
+    {
+      "id": "product",
+      "type": "image",
+      "role": "product",
+      "x": 40,
+      "y": 120,
+      "width": 420,
+      "height": 820,
+      "zIndex": 5
+    },
+    {
+      "id": "headline",
+      "type": "text",
+      "role": "headline",
+      "text": "100% YAKIN",
+      "x": 480,
+      "y": 200,
+      "width": 560,
+      "height": 80,
+      "zIndex": 10,
+      "fontSize": 72,
+      "color": "#111111"
+    }
+  ]
+}
