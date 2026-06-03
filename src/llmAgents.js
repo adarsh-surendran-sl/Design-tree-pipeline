@@ -8,6 +8,8 @@ import { regionsToChildren } from './composition.js'
 import { parseDesignTree, parsePatches } from './schemas.js'
 import { mergePatches } from './patchUtils.js'
 import { buildCompareStrip, getImageDimensions } from './assets.js'
+import { lockFrameToSource } from './frameLock.js'
+import { classifyAdLayout, archetypePromptSuffix } from './layoutArchetype.js'
 
 function mediaTypeForPath(p) {
   const ext = path.extname(String(p)).toLowerCase()
@@ -105,30 +107,40 @@ async function visionJson(prompt, system, imagePaths, llm) {
   throw new Error(`Model did not return valid JSON: ${lastErr?.message || lastErr}`)
 }
 
-function imageToTreeSystem() {
+function imageToTreeSystem(archetypeSuffix = '') {
   return (
     'You analyze advertisement / marketing images and output ONLY valid JSON for a Design Tree.\n' +
     'No markdown, no explanation.\n\n' +
     capabilityPromptBlock() +
+    (archetypeSuffix ? `\nLAYOUT GUIDANCE:\n${archetypeSuffix}\n` : '') +
     `
+Before outputting JSON, verify:
+1) Frame = exact source pixels from user message.
+2) List every visible region: background, product, overlays, text blocks, footer bars.
+3) Each visible text string → type "text" with exact copy (not image crop unless logo mark).
+4) Product bbox: cap/lid top to base/shadow bottom; full silhouette width.
+5) Price/offers → role price or badge; colored panel → shape + text child.
+6) Angled panel → shape polygon with points[].
+7) Do not add layers not visible in this image.
+
 Rules:
 1. Use the EXACT frame width and height from the user message (pixels).
 2. DECOMPOSE the ad into separate layers — do NOT use one full-frame image crop of the entire ad.
 3. Frame backgroundColor = flat base color only. Decorative backgrounds (sunburst, radial rays, stripes, mesh): add a type shape child at zIndex 0–2 covering that region with cssBackground (e.g. repeating-conic-gradient). Do NOT leave patterned areas as frame backgroundColor alone.
-4. Separate nodes for: product/hero (type image, role product), logo (type logo), headline/tagline/CTA (type text), badge/sale (type image or badge), rating (type rating or image crop).
+4. Separate nodes for: product/hero (type image, role product), logo (type logo), headline/tagline/CTA (type text), badge/sale (type image or badge), price (type text, role price), rating (type rating or image crop).
 5. Set role on every node: background_fill|product|logo|headline|tagline|body_text|cta|badge|price|rating|icon|decorative|overlay.
 6. Integer pixel coordinates; zIndex 0 = back.
 7. renderStrategy "crop" + type image|logo for photos, logos, badges, icons, complex chrome.
 8. renderStrategy "primitive" for plain text on solid color (type text|button) and simple shapes.
 9. ONE crop per unified visual region (product+reflection, sale badge circle) — not the whole ad.
 10. Plain text lines (even on sunburst/gradient/pattern backgrounds): type "text" with exact string — NEVER crop typography as image. Pattern is behind text; text is primitive.
-11. Product/hero crops: objectFit "contain", bbox tightly around the product; center horizontally when the original is centered.
+11. Product/hero crops: objectFit "contain", bbox from top of cap to bottom of shadow; preserve original horizontal position.
 12. Do not duplicate text that is already inside a photographic crop.
-13. shape polygon + points[] for flat diagonal panels; gradientFrom/gradientTo for simple two-color linear gradients; cssBackground for conic/radial/repeating patterns (prefer repeating-conic-gradient for sunburst rays, full frame, zIndex 0–1).
-14. renderChoice "css"|"crop"|"ambiguous". If ambiguous, include renderOptions: {"css":{...node fields...},"crop":{...}} with same id/bbox. Use ambiguous when unsure if CSS can match the original.
-15. Do NOT add a narrow vertical panel behind the product unless the original clearly has one — use one full-frame background layer.
+13. shape polygon + points[] for flat diagonal panels and parallelogram price tags; cssBackground for conic/radial/repeating patterns.
+14. renderChoice "css"|"crop"|"ambiguous". If ambiguous, include renderOptions with both variants.
+15. Do NOT add a narrow vertical panel behind the product unless the original clearly has one.
 16. Describe ONLY what appears in the uploaded image — never add logos, products, or backgrounds from other ads or brands.
-17. Match background style to THIS image: flat solid color → frame backgroundColor only (no sunburst); radial rays / stripes → shape + cssBackground with colors sampled from the image (not generic lime green).
+17. Match background style to THIS image: flat solid color → backgroundColor only (no sunburst); patterned → shape cssBackground with colors from the image.
 
 Schema:
 {"type":"frame","width":W,"height":H,"backgroundColor":"#hex","children":[
@@ -155,14 +167,16 @@ Output ONLY JSON: {"patches":[{"element":"node_id","changes":{"field":value}}]}
 Images: (1) ORIGINAL (2) RECONSTRUCTED (3) optional side-by-side.
 
 Fix priority:
-1. Wrong renderStrategy — set type "image" + renderStrategy "crop" for mismatched complex regions
-2. image/logo/background bounds (x,y,width,height)
-3. Merge failed primitive clusters into one image crop (delete duplicates via patches changing type)
-4. frame backgroundColor, text, buttons, shapes, cssBackground, gradients, polygon points
-5. rating type + ratingValue OR crop as image
-6. zIndex
+1. Missing or extra layers — add/remove nodes via type + bbox patches
+2. Product bbox — if product appears cropped/clipped, expand width/height; include cap to shadow
+3. Price/banner position, panel colors, polygon points[]
+4. Wrong renderStrategy — crop for photos/textures
+5. Text content, fontSize, color
+6. Background type (flat vs pattern vs photo)
+7. zIndex
 
-Patches may set: type, renderStrategy, x, y, width, height, and all style fields.
+Do NOT center elements unless the original is centered.
+Patches may set: type, renderStrategy, x, y, width, height, points, and all style fields.
 Up to 20 patches. Existing ids only.`
   )
 }
@@ -182,13 +196,17 @@ OUTPUT SCHEMA:
 
 SEGMENTATION RULES:
 1. Use exact frame dimensions from the user message.
-2. List EVERY visible layer (typically 4–20 regions).
+2. List EVERY visible layer based on content (not a fixed count). Product-only ads may have 3–6 regions.
 3. Default renderStrategy to "crop" when unsure.
 4. ONE region per unified visual: product+reflection, full footer strip, hero photo, logo mark.
 5. Do NOT split complex UI chrome into many small rectangles.
 6. Plain text on flat color only → renderStrategy "primitive", suggestedType "text".
-7. Simple star row only → primitive + suggestedType "rating"; else crop the strip.
-8. Sunburst / radial-ray / striped backgrounds → suggestedType shape, role background_fill, renderStrategy primitive (or ambiguous with css+crop options).`
+7. Price text on colored bar → primitive text role price + shape panel region.
+8. Small overlay badges (e.g. 15ml) → overlay role, positioned relative to product not frame center.
+9. Angled price tag → suggestedType shape, shape polygon, points[] in enrich step.
+10. Simple star row only → primitive + suggestedType "rating"; else crop the strip.
+11. Sunburst / striped backgrounds → shape background_fill; flat white/color → no extra bg region.
+12. zIndex back-to-front: background 0-2, product 5-10, overlays 11-15, text 16+.`
 }
 
 function enrichRegionsSystem() {
@@ -220,20 +238,22 @@ Max 15 ids.`
 const LAYOUT_FINE_SYSTEM = `You perform a final pixel-alignment pass on an ad reconstruction.
 Output ONLY JSON: {"patches":[{"element":"id","changes":{...}}]}
 
-Use the side-by-side image: LEFT=original, RIGHT=reconstruction.
-For each visible mismatch, estimate pixel deltas and output ONLY numeric/style keys:
-x, y, width, height, fontSize, color, backgroundColor, fill, cssBackground, opacity, borderRadius, textAlign, objectFit, zIndex.
+Use the side-by-side image: LEFT=original, RIGHT=reconstruction (aspect preserved, letterboxed).
+For each visible mismatch, estimate pixel deltas and output numeric/style keys:
+x, y, width, height, fontSize, color, backgroundColor, fill, cssBackground, opacity, borderRadius, textAlign, objectFit, zIndex, points (polygon arrays).
 
 Do not change text content unless clearly wrong. Prefer small bounded adjustments (typical 2-40px).
-Prioritize product position/size and headline vertical placement. Up to 15 patches.`
+Prioritize product position/size, price banner, and overlay badges. Do not center unless original is centered.
+Up to 15 patches.`
 
 const TARGETED_COMPARE_SYSTEM = `You compare ORIGINAL vs RECONSTRUCTED ad renders.
 Output ONLY JSON: {"patches":[{"element":"node_id","changes":{...}}]}
 
-Focus ONLY on the layers mentioned in the user message (background, product, headline, CTA).
-Fix bbox and style fields: x, y, width, height, cssBackground, textAlign, objectFit, fontSize, color.
-For background sunburst mismatch, set cssBackground to repeating-conic-gradient OR switch type to image with full-frame crop.
-Up to 10 patches.`
+Focus ONLY on the layers mentioned in the user message (background, product, headline, CTA, price, badge, overlay).
+Fix bbox and style fields: x, y, width, height, cssBackground, textAlign, objectFit, fontSize, color, points[].
+For background mismatch on flat ads, use frame backgroundColor only — remove spurious sunburst layers.
+For patterned bg mismatch, set cssBackground OR switch type to image crop.
+Do not center elements unless original is centered. Up to 10 patches.`
 
 function nodeIdSummary(tree) {
   const lines = []
@@ -272,9 +292,10 @@ async function visionAuditRenderStrategy(imagePath, tree, llm) {
   }
 }
 
-export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoStage = true } = {}) {
+export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoStage = true, layoutMeta = null } = {}) {
   const [imgW, imgH] = await getImageDimensions(imagePath)
   const frameDefaults = { width: imgW, height: imgH }
+  const archetypeSuffix = layoutMeta?.archetype ? archetypePromptSuffix(layoutMeta.archetype) : ''
   const basePrompt =
     `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
     'Reconstruct this ad for maximum visual fidelity.'
@@ -283,21 +304,23 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
     ? await (async () => {
         const segPrompt =
           `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
+          (archetypeSuffix ? `${archetypeSuffix}\n` : '') +
           'Segment this ad into regions with renderStrategy per capability rules.'
 
         const segData = await visionJson(segPrompt, regionSegmentSystem(), [imagePath], llm)
         const regions = segData?.regions || []
         if (!regions.length) {
-          const system = imageToTreeSystem()
+          const system = imageToTreeSystem(archetypeSuffix)
           const prompt =
             `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. Return a complete Design Tree that reconstructs this ad using crop vs primitive per capability rules.`
           const data = await visionJson(prompt, system, [imagePath], llm)
-          return parseTree(data, frameDefaults)
+          return lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
         }
 
         const planJson = JSON.stringify(segData, null, 2)
         const enrichPrompt =
           `Frame ${imgW}x${imgH}px.\nREGION PLAN:\n${planJson}\n\n` +
+          (archetypeSuffix ? `${archetypeSuffix}\n\n` : '') +
           `Build the full Design Tree JSON with type frame, width ${imgW}, height ${imgH}, backgroundColor, and children[] from this plan and the image.`
 
         const enrichData = await visionJson(enrichPrompt, enrichRegionsSystem(), [imagePath], llm)
@@ -312,25 +335,26 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
             children: regionsToChildren(regions, frameDefaults),
           }
         }
-        return parseTree(merged, frameDefaults)
+        return lockFrameToSource(parseTree(merged, frameDefaults), imgW, imgH)
       })()
     : await (async () => {
-        const system = imageToTreeSystem()
+        const system = imageToTreeSystem(archetypeSuffix)
         const prompt =
           `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
           'Return a complete Design Tree that reconstructs this ad using crop vs primitive per capability rules.'
         const data = await visionJson(prompt, system, [imagePath], llm)
-        return parseTree(data, frameDefaults)
+        return lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
       })()
 
   let refined = tree
-  const system = imageToTreeSystem()
+  const system = imageToTreeSystem(archetypeSuffix)
+  const auditOpts = { skipBackgroundAudit: layoutMeta?.skipBackgroundAudit ?? false }
   for (let retry = 0; retry < 2; retry += 1) {
-    const issues = heuristicAudit(refined)
+    const issues = heuristicAudit(refined, auditOpts)
     if (!issues.length) break
     const prompt = buildRetryPrompt(basePrompt, issues)
     const data = await visionJson(prompt, system, [imagePath], llm)
-    refined = parseTree(data, frameDefaults)
+    refined = lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
   }
 
   if (runVisionAudit) {
@@ -346,13 +370,12 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
   refined = normalizeTreeStrategies(refined)
 
   if (!(refined.children || []).length) {
-    const system = imageToTreeSystem()
     const prompt =
       `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
-      'Return a complete Design Tree with at least 5 children (logo, product, headline, badge, footer text). ' +
-      'Do NOT use one full-frame image crop.'
+      'Return a complete Design Tree with one node per visible region (product, price bar, badges, text). ' +
+      'Do NOT use one full-frame image crop. Do NOT invent layers not in the image.'
     const data = await visionJson(prompt, system, [imagePath], llm)
-    refined = parseTree(data, frameDefaults)
+    refined = lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
     refined = normalizeTreeStrategies(refined)
   }
 
@@ -440,7 +463,8 @@ export async function compareAndPatchTargeted(
     : path.join(path.dirname(rendered), '_compare_targeted.png')
   await buildCompareStrip(orig, rendered, strip)
 
-  const focusStr = (focus || []).join(', ') || 'background, product, headline, cta'
+  const focusStr =
+    (focus || []).join(', ') || 'background_fill, product, headline, cta, price, badge, overlay'
   const prompt =
     `Frame ${tree.width}x${tree.height}px.\nFocus layers: ${focusStr}.\n` +
     `Tree nodes:\n${nodeIdSummary(tree)}\n\n` +

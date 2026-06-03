@@ -1,5 +1,6 @@
 import { applyBackgroundPresets, treeHasPatternedBackground } from './backgroundPresets.js'
 import { RASTER_TYPES } from './capabilities.js'
+import { shouldStackHeadlines } from './reconstructionLayout.js'
 
 const HEADLINE_FONT = 'Barlow Condensed, sans-serif'
 const BODY_FONT = 'Inter, system-ui, sans-serif'
@@ -74,7 +75,7 @@ function guessCtaText(node) {
 }
 
 /** Headline / subheadline typography and roles. */
-export function applyReconstructionTypography(tree) {
+export function applyReconstructionTypography(tree, { layoutPreserving = true } = {}) {
   const updated = JSON.parse(JSON.stringify(tree))
   const headlines = (updated.children || []).filter(isHeadlineNode).sort((a, b) => (a.y ?? 0) - (b.y ?? 0))
 
@@ -82,11 +83,16 @@ export function applyReconstructionTypography(tree) {
     const node = headlines[i]
     if (i === 0) node.role = node.role || 'headline'
     else node.role = node.role || 'tagline'
-    node.fontFamily = HEADLINE_FONT
-    node.fontWeight = 'bold'
-    node.textAlign = 'center'
+    if (!layoutPreserving) {
+      node.fontFamily = HEADLINE_FONT
+      node.fontWeight = 'bold'
+      node.textAlign = node.textAlign || 'center'
+    } else {
+      node.fontFamily = node.fontFamily || HEADLINE_FONT
+      node.fontWeight = node.fontWeight || 'bold'
+    }
     if (!node.fontSize) node.fontSize = i === 0 ? 96 : 58
-    if (i === 1 && headlines[0]?.fontSize) {
+    if (i === 1 && headlines[0]?.fontSize && !layoutPreserving) {
       node.fontSize = Math.round(headlines[0].fontSize * 0.58)
     }
     if (!node.color) node.color = '#111111'
@@ -95,7 +101,7 @@ export function applyReconstructionTypography(tree) {
   for (const node of updated.children || []) {
     if (node.type === 'button' || node.role === 'cta') {
       node.fontFamily = node.fontFamily || BODY_FONT
-      node.textAlign = 'center'
+      if (!layoutPreserving) node.textAlign = node.textAlign || 'center'
     }
     if (isProductNode(node)) {
       node.objectFit = 'contain'
@@ -207,6 +213,7 @@ export function enhanceReconstructionTree(tree, options = {}) {
     skipReambiguous = false,
     respectRenderChoices = false,
     skipBackgroundPresets = false,
+    layoutPreserving = true,
   } = options
   let t = JSON.parse(JSON.stringify(tree))
   t = removeNarrowBackgroundPanels(t)
@@ -227,8 +234,10 @@ export function enhanceReconstructionTree(tree, options = {}) {
     })
   }
   t = convertCtaRasterToButton(t)
-  t = applyReconstructionTypography(t)
-  t = stackHeadlineLines(t)
+  t = applyReconstructionTypography(t, { layoutPreserving })
+  if (!layoutPreserving && shouldStackHeadlines(t)) {
+    t = stackHeadlineLines(t)
+  }
   if (!skipReambiguous) t = ensureBackgroundRenderOptions(t)
   return t
 }

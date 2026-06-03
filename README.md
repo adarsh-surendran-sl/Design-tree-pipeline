@@ -37,9 +37,11 @@ Progress and renders stream live; outputs are saved under `runs/<jobId>/`.
 - **CSS backgrounds** (`cssBackground`, sunburst presets) vs **image crop** (user choice when ambiguous)
 - **Auto-enhance**: centered headlines (Barlow Condensed), CTA as button, product `object-fit: contain`, narrow-panel removal
 - **Segmentation**: heuristic foreground bbox + optional MCP `remove_background` when `PUBLIC_BASE_URL` is set
-- **Quality loop**: pixel similarity score, targeted compare retry, layout fine pass
+- **Quality loop**: pixel similarity score (aspect-aware), targeted compare retry, layout fine pass, per-layer CSS→crop fallback, high-fidelity mode when score stays low
+- **Layout archetypes**: product hero, price banner, typography-led, full-bleed photo — route heuristics and compare focus per ad type
+- **Frame fidelity**: tree dimensions locked to source image; uniform crop scaling
 - **UI**: overlay mode, per-layer x/y/w/h nudges, layer reference export (`layers_reference.md` in job folder)
-- **Tests**: `npm run test:reconstruction-golden`
+- **Tests**: `npm run test:reconstruction-golden` (4 archetypes + frame lock), `npm run test:product-bbox` (vertical product-hero bbox)
 
 ### Visual editor (Canva-style)
 

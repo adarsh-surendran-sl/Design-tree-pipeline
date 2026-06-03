@@ -33,6 +33,13 @@ export function capabilityPromptBlock() {
   return (
     `RENDERER CAN:\n${can}\n\n` +
     `RENDERER CANNOT (use type image/logo/background OR renderStrategy crop):\n${cannot}\n\n` +
+    `FIDELITY RULES (non-negotiable):\n` +
+    `  - Describe ONLY what is visible in THIS image. Never reuse brands, logos, or backgrounds from other ads.\n` +
+    `  - Frame size MUST equal source pixels exactly.\n` +
+    `  - Every visible distinct region gets its own node with accurate bbox (x,y,width,height).\n` +
+    `  - Bbox must include full object + soft shadow/reflection; never crop through the subject.\n` +
+    `  - Prefer FEWER correct layers over many wrong layers. Do not invent headline/logo if absent.\n` +
+    `  - When unsure between CSS and crop, set renderChoice "ambiguous" with both renderOptions.\n\n` +
     `DECISION RULE (renderStrategy on each node):\n` +
     `  - "crop": region copied from original — default for anything in CANNOT list\n` +
     `  - "primitive": built from shapes/text/rating — only for flat, simple regions\n` +
@@ -41,6 +48,9 @@ export function capabilityPromptBlock() {
     `Do NOT approximate complex regions with many adjacent rectangles.\n` +
     `Separate each plain text line on solid background into its own text node.\n` +
     `For sunburst / radial-ray / stripe patterns: use type shape + cssBackground (not frame backgroundColor alone).\n` +
+    `Flat solid background → frame backgroundColor only, no decorative shape layer.\n` +
+    `Price/offers: role "price" or "badge"; text on colored panel → parent shape + child text nodes.\n` +
+    `Angled price tag → shape polygon with points[] relative to node box.\n` +
     `If unsure whether a region is reproducible with CSS or must be cropped: renderChoice "ambiguous" + renderOptions { css, crop }.\n` +
     ``
   )
@@ -151,7 +161,7 @@ function _overlaps(a, b) {
   return ax < bx2 && ax2 > bx && ay < by2 && ay2 > by
 }
 
-export function heuristicAudit(tree) {
+export function heuristicAudit(tree, { skipBackgroundAudit = false } = {}) {
   const issues = []
 
   const children = tree.children || []
@@ -178,7 +188,7 @@ export function heuristicAudit(tree) {
     )
   })
   const hasProduct = children.some((n) => (n.role || '').toLowerCase() === 'product' || n.type === 'image')
-  if (hasProduct && !hasDecorBackground && children.length >= 3) {
+  if (!skipBackgroundAudit && hasProduct && !hasDecorBackground && children.length >= 3) {
     issues.push({
       code: 'missing_background_layer',
       message: 'No background_fill / large shape layer for patterned or gradient backgrounds',

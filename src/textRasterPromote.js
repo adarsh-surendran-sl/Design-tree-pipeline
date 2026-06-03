@@ -8,17 +8,19 @@ const TEXT_PROMOTE_SYSTEM = `You identify advertisement layers wrongly modeled a
 
 Output ONLY JSON:
 {"conversions":[
-  {"element":"node_id","type":"text","role":"headline|tagline|body_text|cta","text":"exact visible string",
-   "color":"#hex","fontSize":48,"fontWeight":"bold","textAlign":"center",
+  {"element":"node_id","type":"text","role":"headline|tagline|body_text|cta|price|badge","text":"exact visible string",
+   "color":"#hex","fontSize":48,"fontWeight":"bold","textAlign":"left|center|right",
    "panel":null}
 ]}
 
 Rules:
 1. Headlines/taglines on sunburst or gradient backgrounds → type "text" with exact copy (NOT an image crop).
-2. Discount/offer bars with short copy → type "text" or suggest button; include backgroundColor if on a solid bar.
-3. Optional "panel": if text sits on a distinct flat/shaped banner, add panel:{fill:"#hex",shape:"rect"} — do NOT bake panel+text into one image.
-4. NEVER convert: product bottle, logo mark, star icons, photographic badges.
-5. Max 8 conversions. Only use node ids from the user list.`
+2. Price strings (₹, $, €, %, "onwards") → type "text", role "price".
+3. Discount/offer bars with short copy → type "text" or suggest button; include backgroundColor if on a solid bar.
+4. Optional "panel": if text sits on a distinct flat/shaped banner, add panel:{fill:"#hex",shape:"rect"|"polygon",points:[...]} — do NOT bake panel+text into one image.
+5. NEVER convert: product bottle, logo mark, star icons, photographic badges.
+6. Preserve textAlign from original layout — do not force center unless original is centered.
+7. Max 8 conversions. Only use node ids from the user list.`
 
 function isProductOrLogo(node) {
   const role = (node.role || '').toLowerCase()
@@ -34,7 +36,7 @@ function isProductOrLogo(node) {
 }
 
 /** Heuristic: raster layer in header band that is likely typography. */
-export function isLikelyTextRaster(node, tree) {
+export function isLikelyTextRaster(node, tree, { layoutMeta = null } = {}) {
   if (!RASTER_TYPES.has(node.type)) return false
   if (isProductOrLogo(node)) return false
   if (node.renderChoiceResolved === 'crop' && node.role === 'background_fill') return false
@@ -49,10 +51,12 @@ export function isLikelyTextRaster(node, tree) {
   const area = w * h
   const frameArea = frameW * frameH
 
+  if (role === 'price' || /price|₹|\$|onwards/i.test(id)) return true
   if (role === 'headline' || role === 'tagline' || role === 'body_text' || role === 'cta') return true
-  if (/headline|tagline|title|header|subhead|copy|slogan|text|banner.*text/i.test(id)) return true
+  if (/headline|tagline|title|header|subhead|copy|slogan|text|banner.*text|price/i.test(id)) return true
 
-  const inHeaderBand = y < frameH * 0.42
+  const headerBandRatio = layoutMeta?.archetype === 'verticalStory' ? 0.55 : 0.42
+  const inHeaderBand = y < frameH * headerBandRatio
   const wideShort = w >= frameW * 0.35 && h <= frameH * 0.28 && h >= 24
   const smallTextStrip = area < frameArea * 0.12 && w > h * 1.5 && inHeaderBand
 
@@ -89,30 +93,34 @@ async function visionJson(prompt, system, imagePath, llm) {
   return JSON.parse(match[0])
 }
 
-function applyConversion(node, conv, frameW) {
+function applyConversion(node, conv, frameW, { layoutPreserving = true } = {}) {
   node.type = conv.type === 'button' ? 'button' : 'text'
   node.renderStrategy = 'primitive'
   node.role = conv.role || node.role || 'headline'
   node.text = conv.text || node.text || ''
-  node.color = conv.color || node.color || '#ffffff'
+  node.color = conv.color || node.color || '#111111'
   node.fontSize = conv.fontSize || node.fontSize || 48
   node.fontWeight = conv.fontWeight || 'bold'
-  node.textAlign = conv.textAlign || 'center'
+  node.textAlign = conv.textAlign || node.textAlign || (layoutPreserving ? 'left' : 'center')
   node.fontFamily = node.fontFamily || 'Barlow Condensed, sans-serif'
   delete node.src
   delete node.srcX
   delete node.srcY
   delete node.srcWidth
   delete node.srcHeight
-  node.x = Math.max(20, Math.round((frameW - (node.width ?? frameW)) / 2))
+  if (!layoutPreserving && !conv.textAlign) {
+    node.x = Math.max(20, Math.round((frameW - (node.width ?? frameW)) / 2))
+  }
 }
 
 /**
  * Promote misclassified text image crops → type text (vision + heuristics).
  */
-export async function promoteTextRasters(tree, imagePath, llm = null, { useVision = true } = {}) {
+export async function promoteTextRasters(tree, imagePath, llm = null, { useVision = true, layoutMeta = null } = {}) {
   const updated = JSON.parse(JSON.stringify(tree))
-  const candidates = (updated.children || []).filter((n) => isLikelyTextRaster(n, updated))
+  const layout = layoutMeta || updated._layoutMeta
+  const layoutPreserving = layout?.layoutPreserving !== false
+  const candidates = (updated.children || []).filter((n) => isLikelyTextRaster(n, updated, { layoutMeta: layout }))
   if (!candidates.length) return updated
 
   const byId = new Map(candidates.map((n) => [n.id, n]))
@@ -135,23 +143,25 @@ export async function promoteTextRasters(tree, imagePath, llm = null, { useVisio
       for (const conv of data.conversions || []) {
         const node = byId.get(String(conv.element))
         if (!node || !conv.text?.trim()) continue
-        applyConversion(node, conv, updated.width)
+        applyConversion(node, conv, updated.width, { layoutPreserving })
         if (conv.panel?.fill) {
           const panelId = `${node.id}_panel`
           if (!(updated.children || []).some((c) => c.id === panelId)) {
-            updated.children.push({
+            const panel = {
               id: panelId,
               type: 'shape',
               role: 'decorative',
               renderStrategy: 'primitive',
-              shape: 'rect',
+              shape: conv.panel.shape === 'polygon' ? 'polygon' : 'rect',
               x: node.x - 8,
               y: node.y - 6,
               width: node.width + 16,
               height: node.height + 12,
               fill: conv.panel.fill,
               zIndex: (node.zIndex ?? 10) - 1,
-            })
+            }
+            if (conv.panel.points) panel.points = conv.panel.points
+            updated.children.push(panel)
           }
         }
         byId.delete(node.id)
@@ -169,7 +179,7 @@ export async function promoteTextRasters(tree, imagePath, llm = null, { useVisio
     node.color = node.color || '#f5f0e8'
     node.fontSize = node.fontSize || (node.role === 'tagline' ? 52 : 88)
     node.fontWeight = 'bold'
-    node.textAlign = 'center'
+    node.textAlign = layoutPreserving ? 'left' : 'center'
     node.fontFamily = 'Barlow Condensed, sans-serif'
     delete node.src
     delete node.srcX

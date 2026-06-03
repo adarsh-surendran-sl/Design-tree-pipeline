@@ -1,7 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 
-import { embedRasterAssets } from './assets.js'
+import { embedRasterAssets, getImageDimensions } from './assets.js'
 import { imageToTree, compareAndPatch } from './llmAgents.js'
 import { applyPatchesSafe } from './patchUtils.js'
 import { normalizeTreeStrategies } from './capabilities.js'
@@ -15,12 +15,14 @@ import { fixReconstructionLayout } from './reconstructionLayout.js'
 import { applyUserOverrides } from './overrides.js'
 import { renderToFilesBrowser } from './renderDispatch.js'
 import {
-  runReconstructionEnhancements,
   runPostRenderQualityPass,
   saveReconstructionArtifacts,
   scoreReconstruction,
+  prepareTreeWithLayout,
+  classifyAdLayout,
 } from './reconstructionOrchestrator.js'
 import { enhanceReconstructionTree } from './reconstructionEnhance.js'
+import { lockFrameToSource } from './frameLock.js'
 
 export const DEFAULT_MAX_LOOPS = 10
 export const MAX_LOOPS_CAP = 100
@@ -34,9 +36,20 @@ function getJobContext(outputDir) {
 }
 
 async function prepareTree(tree, imagePath, llm, options) {
-  let t = await runReconstructionEnhancements(tree, imagePath, llm, options)
-  t = sanitizeTreeComposition(t)
-  return t
+  return prepareTreeWithLayout(tree, imagePath, llm, options)
+}
+
+function layoutOpts(tree) {
+  const meta = tree._layoutMeta || classifyAdLayout(tree)
+  return { layoutPreserving: meta.layoutPreserving !== false }
+}
+
+function enhanceAfterPatch(tree) {
+  tree = normalizeTreeStrategies(tree)
+  const opts = { skipBackgroundPresets: true, skipReambiguous: true, ...layoutOpts(tree) }
+  tree = enhanceReconstructionTree(tree, opts)
+  tree = fixReconstructionLayout(tree, layoutOpts(tree))
+  return tree
 }
 
 /** Build tree + crops only (no compare loop). For UI element editing. */
@@ -60,10 +73,20 @@ export async function runAnalyze({
   }
 
   progress('Analyzing layers (product, text, logo, badge…)…')
-  let tree = await imageToTree(img, llm, { runVisionAudit: highAccuracy, twoStage: highAccuracy })
+  const [srcW, srcH] = await getImageDimensions(img)
+  const layoutGuess = classifyAdLayout({ type: 'frame', width: srcW, height: srcH, children: [] })
+  let layoutMeta = layoutGuess
+  let tree = await imageToTree(img, llm, {
+    runVisionAudit: highAccuracy,
+    twoStage: highAccuracy,
+    layoutMeta: layoutGuess,
+  })
 
   progress('Enhancing layout, typography, backgrounds…')
-  tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out })
+  tree = lockFrameToSource(tree, srcW, srcH)
+  layoutMeta = classifyAdLayout(tree)
+  tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out, layoutMeta })
+  tree = sanitizeTreeComposition(tree)
 
   const choicesPath = path.join(out, 'design_tree_with_choices.json')
   fs.writeFileSync(choicesPath, JSON.stringify(tree, null, 2), 'utf8')
@@ -71,8 +94,8 @@ export async function runAnalyze({
   if (renderAmbiguities.length) {
     tree = resolveAmbiguitiesWithDefaults(tree)
     tree = normalizeTreeStrategies(tree)
-    tree = fixReconstructionLayout(tree)
-    tree = enhanceReconstructionTree(tree)
+    tree = fixReconstructionLayout(tree, layoutOpts(tree))
+    tree = enhanceReconstructionTree(tree, { skipReambiguous: true, ...layoutOpts(tree) })
   }
 
   progress('Embedding crops from original (per region, not full ad)…')
@@ -86,7 +109,7 @@ export async function runAnalyze({
 
   let reconstructionScores = []
   try {
-    const score = await scoreReconstruction(img, png)
+    const score = await scoreReconstruction(img, png, tree)
     reconstructionScores = [score]
     if (highAccuracy) {
       const quality = await runPostRenderQualityPass({
@@ -96,13 +119,14 @@ export async function runAnalyze({
         llm,
         compareDir: out,
         highAccuracy,
+        layoutMeta: tree._layoutMeta,
       })
       tree = quality.tree
       reconstructionScores = quality.scores
       tree = await embedRasterAssets(tree, img, assetsDir)
       fs.writeFileSync(treePath, JSON.stringify(tree, null, 2), 'utf8')
       const rerender = await renderToFilesBrowser(tree, out, 'preview', assetsDir)
-      reconstructionScores.push(await scoreReconstruction(img, rerender.png))
+      reconstructionScores.push(await scoreReconstruction(img, rerender.png, tree))
     }
   } catch (e) {
     console.warn('Analyze quality pass:', e?.message || e)
@@ -149,8 +173,8 @@ export async function resolveRenderChoicesAndRender({
   fs.writeFileSync(appliedPath, JSON.stringify(renderChoices, null, 2), 'utf8')
 
   updated = normalizeTreeStrategies(updated)
-  updated = enhanceReconstructionTree(updated, { skipReambiguous: true, respectRenderChoices: true })
-  updated = fixReconstructionLayout(updated)
+  updated = enhanceReconstructionTree(updated, { skipReambiguous: true, respectRenderChoices: true, ...layoutOpts(updated) })
+  updated = fixReconstructionLayout(updated, layoutOpts(updated))
   updated = applyUserOverrides(updated, overrides)
   updated = sanitizeTreeComposition(updated)
 
@@ -195,11 +219,12 @@ export async function renderWithOverrides({
   fs.mkdirSync(assetsDir, { recursive: true })
 
   let updated = applyUserOverrides(tree, overrides)
-  updated = fixReconstructionLayout(updated)
+  updated = fixReconstructionLayout(updated, layoutOpts(updated))
   updated = enhanceReconstructionTree(updated, {
     skipBackgroundPresets: true,
     skipReambiguous: true,
     respectRenderChoices: true,
+    ...layoutOpts(updated),
   })
   updated = sanitizeTreeComposition(updated)
 
@@ -258,10 +283,19 @@ export async function runPipeline({
   }
 
   progress('Analyzing image (region plan → tree)…', 0)
-  let tree = await imageToTree(img, llm, { runVisionAudit: highAccuracy, twoStage: highAccuracy })
+  const [srcW, srcH] = await getImageDimensions(img)
+  const layoutGuess = classifyAdLayout({ type: 'frame', width: srcW, height: srcH, children: [] })
+  let tree = await imageToTree(img, llm, {
+    runVisionAudit: highAccuracy,
+    twoStage: highAccuracy,
+    layoutMeta: layoutGuess,
+  })
 
   progress('Enhancing layout, typography, backgrounds…', 0)
-  tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out })
+  tree = lockFrameToSource(tree, srcW, srcH)
+  const layoutMeta = classifyAdLayout(tree)
+  tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out, layoutMeta })
+  tree = sanitizeTreeComposition(tree)
 
   const choicesPath = path.join(out, 'design_tree_with_choices.json')
   fs.writeFileSync(choicesPath, JSON.stringify(tree, null, 2), 'utf8')
@@ -269,8 +303,8 @@ export async function runPipeline({
   if (renderAmbiguities.length) {
     tree = resolveAmbiguitiesWithDefaults(tree)
     tree = normalizeTreeStrategies(tree)
-    tree = fixReconstructionLayout(tree)
-    tree = enhanceReconstructionTree(tree)
+    tree = fixReconstructionLayout(tree, layoutOpts(tree))
+    tree = enhanceReconstructionTree(tree, { skipReambiguous: true, ...layoutOpts(tree) })
   }
   tree = await embedRasterAssets(tree, img, assetsDir)
 
@@ -282,15 +316,13 @@ export async function runPipeline({
     const boot = await renderToFilesBrowser(tree, out, bootBase, assetsDir)
     let bootPatches = []
     try {
-      const bootScore = await scoreReconstruction(img, boot.png)
+      const bootScore = await scoreReconstruction(img, boot.png, tree)
       reconstructionScores.push({ phase: 'bootstrap', ...bootScore })
 
       bootPatches = await compareAndPatch(img, boot.png, tree, llm, { compareDir: out, highAccuracy })
       if (bootPatches.length) {
         tree = applyPatchesSafe(tree, bootPatches)
-        tree = normalizeTreeStrategies(tree)
-        tree = fixReconstructionLayout(tree)
-        tree = enhanceReconstructionTree(tree)
+        tree = enhanceAfterPatch(tree)
         tree = await embedRasterAssets(tree, img, assetsDir)
       } else if (bootScore.needsRetry) {
         const quality = await runPostRenderQualityPass({
@@ -300,6 +332,7 @@ export async function runPipeline({
           llm,
           compareDir: out,
           highAccuracy,
+          layoutMeta: tree._layoutMeta,
         })
         tree = quality.tree
         reconstructionScores.push(...(quality.scores || []).map((s) => ({ phase: 'bootstrap_retry', ...s })))
@@ -321,7 +354,7 @@ export async function runPipeline({
     progress(`Comparing images (iteration ${loop})…`, loop)
     let patches = []
     try {
-      const loopScore = await scoreReconstruction(img, png)
+      const loopScore = await scoreReconstruction(img, png, tree)
       reconstructionScores.push({ phase: `loop_${loop}`, ...loopScore })
 
       patches = await compareAndPatch(img, png, tree, llm, { compareDir: out, highAccuracy })
@@ -335,11 +368,10 @@ export async function runPipeline({
           llm,
           compareDir: out,
           highAccuracy,
+          layoutMeta: tree._layoutMeta,
         })
         tree = quality.tree
-        tree = normalizeTreeStrategies(tree)
-        tree = fixReconstructionLayout(tree)
-        tree = enhanceReconstructionTree(tree)
+        tree = enhanceAfterPatch(tree)
         reconstructionScores.push(...(quality.scores || []).map((s) => ({ phase: `loop_${loop}_retry`, ...s })))
         patches = [{ element: '__quality_retry__' }]
       }
@@ -368,9 +400,7 @@ export async function runPipeline({
 
     progress(`Applying ${realPatches.length} patch(es)…`, loop)
     tree = applyPatchesSafe(tree, realPatches)
-    tree = normalizeTreeStrategies(tree)
-    tree = fixReconstructionLayout(tree)
-    tree = enhanceReconstructionTree(tree)
+    tree = enhanceAfterPatch(tree)
   }
 
   let finalRender = null
@@ -383,15 +413,13 @@ export async function runPipeline({
       polish = await compareAndPatch(img, png, tree, llm, { compareDir: out, highAccuracy })
       if (polish.length) {
         tree = applyPatchesSafe(tree, polish)
-        tree = normalizeTreeStrategies(tree)
-        tree = fixReconstructionLayout(tree)
-        tree = enhanceReconstructionTree(tree)
+        tree = enhanceAfterPatch(tree)
         tree = await embedRasterAssets(tree, img, assetsDir)
         const final = await renderToFilesBrowser(tree, out, 'render_final', assetsDir)
         finalRender = { loop: maxLoops + 1, tree, png_path: final.png, patches: polish, html_path: final.html }
         reconstructionScores.push({
           phase: 'final',
-          ...(await scoreReconstruction(img, final.png)),
+          ...(await scoreReconstruction(img, final.png, tree)),
         })
       } else {
         finalRender = { loop: maxLoops + 1, tree, png_path: png, patches: polish, html_path: html }

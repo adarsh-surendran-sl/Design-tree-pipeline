@@ -1,0 +1,46 @@
+{
+  "type": "frame",
+  "width": 1080,
+  "height": 400,
+  "backgroundColor": "#e8e0f0",
+  "children": [
+    {
+      "id": "price_bar_bg",
+      "type": "shape",
+      "role": "overlay",
+      "x": 0,
+      "y": 280,
+      "width": 1080,
+      "height": 120,
+      "zIndex": 5,
+      "fill": "#9b8ec4"
+    },
+    {
+      "id": "price_tag",
+      "type": "shape",
+      "role": "price",
+      "shape": "polygon",
+      "points": [40, 300, 420, 300, 460, 380, 40, 380],
+      "x": 40,
+      "y": 300,
+      "width": 420,
+      "height": 80,
+      "zIndex": 10,
+      "fill": "#ffffff"
+    },
+    {
+      "id": "price_label",
+      "type": "text",
+      "role": "price",
+      "text": "₹343.00 onwards",
+      "x": 60,
+      "y": 318,
+      "width": 340,
+      "height": 44,
+      "zIndex": 12,
+      "fontSize": 36,
+      "color": "#111111",
+      "textAlign": "left"
+    }
+  ]
+}

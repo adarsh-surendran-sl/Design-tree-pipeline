@@ -4,13 +4,31 @@
       "id": "dove-1x1",
       "tree": "dove-1x1/tree.json",
       "description": "Dove shampoo square ad — typography, sunburst, product alignment",
-      "expectPatternedBg": true
+      "expectPatternedBg": true,
+      "expectCenteredHeadline": true
     },
     {
       "id": "clear-flat",
       "tree": "clear-flat/tree.json",
       "description": "Flat teal background — must NOT inject sunburst",
-      "expectPatternedBg": false
+      "expectPatternedBg": false,
+      "expectCenteredHeadline": false
+    },
+    {
+      "id": "product-hero-vertical",
+      "tree": "product-hero-vertical/tree.json",
+      "description": "Vertical product hero with price bar — preserve layout positions",
+      "expectPatternedBg": false,
+      "expectCenteredHeadline": false,
+      "expectArchetype": "productHero"
+    },
+    {
+      "id": "price-parallelogram",
+      "tree": "price-parallelogram/tree.json",
+      "description": "Price banner with polygon tag",
+      "expectPatternedBg": false,
+      "expectCenteredHeadline": false,
+      "expectArchetype": "priceBanner"
     }
   ]
 }

@@ -1,0 +1,56 @@
+{
+  "type": "frame",
+  "width": 800,
+  "height": 1200,
+  "backgroundColor": "#ffffff",
+  "children": [
+    {
+      "id": "product_jar",
+      "type": "image",
+      "role": "product",
+      "x": 200,
+      "y": 180,
+      "width": 400,
+      "height": 720,
+      "zIndex": 5
+    },
+    {
+      "id": "volume_badge",
+      "type": "text",
+      "role": "badge",
+      "text": "15ml",
+      "x": 520,
+      "y": 820,
+      "width": 120,
+      "height": 48,
+      "zIndex": 8,
+      "fontSize": 28,
+      "color": "#111111"
+    },
+    {
+      "id": "price_bar",
+      "type": "shape",
+      "role": "overlay",
+      "x": 0,
+      "y": 980,
+      "width": 800,
+      "height": 80,
+      "zIndex": 10,
+      "fill": "#c8b8e8"
+    },
+    {
+      "id": "price_text",
+      "type": "text",
+      "role": "price",
+      "text": "₹343.00 onwards",
+      "x": 40,
+      "y": 995,
+      "width": 360,
+      "height": 50,
+      "zIndex": 12,
+      "fontSize": 32,
+      "color": "#111111",
+      "textAlign": "left"
+    }
+  ]
+}

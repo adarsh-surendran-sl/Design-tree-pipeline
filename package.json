@@ -18,6 +18,7 @@
     "test:ad-template": "node bin/test-ad-template.js",
     "test:ad-template:full": "node bin/test-ad-template.js --full",
     "test:reconstruction-golden": "node bin/test-reconstruction-golden.js",
+    "test:product-bbox": "node bin/test-product-bbox.js",
     "test:design-tree-editor": "node bin/test-design-tree-editor.js"
   },
   "dependencies": {
