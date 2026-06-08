@@ -1,0 +1,50 @@
+schema: spec-driven
+
+# Project context shown to AI when creating artifacts.
+context: |
+  ## Goal
+
+  Turn product briefs and existing ad images into multiple ready-to-review marketing ad designs — fast, with real product assets, live progress, and a refinement loop.
+
+  Marketing teams need several ad options (layouts, headlines, moods) for the same product without long designer feedback cycles. This repo delivers that through two modes in one standalone JS app:
+
+  1. **Ad Template Studio** (`/`, main UI) — product brief → AI agent pipeline → ranked ad previews with creative rationale and chat refinement.
+  2. **Image → Design Tree** (`/image-to-tree`) — upload an existing ad → structured layout JSON (design tree) → render, score, and refine until it matches the source.
+
+  Users stay in control: ads use **their** product image and **their** copy. Do not invent fake reviews, prices, or claims unless the brief explicitly asks for broader creative direction.
+
+  ## Agent pipeline (Ad Template Studio)
+
+  1. Product Analyst — research product, audience, category patterns
+  2. Design Strategist — plan distinct creative directions
+  3. Design Creator — build layouts with real product image and copy
+  4. Orchestrator — coordinate stages; chat-based refine and resume
+
+  ## Tech stack
+
+  - Node.js (ES modules), Express web UI (`server.js`, `npm run ui` on :8787)
+  - Anthropic Claude via `@anthropic-ai/sdk` (`ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`)
+  - Playwright + Sharp for rendering; Remotion for preview grid
+  - Zod schemas; design trees as JSON (`design_tree_final.json`, layer editor)
+  - Optional Python layout-service for OCR/heuristic layout
+  - Golden tests: `npm run test:reconstruction-golden`, `npm run test:design-tree-editor`, `npm run test:ad-template`
+
+  ## Conventions
+
+  - Minimize scope; match existing patterns in `src/agents/`, `src/pipeline.js`, `public/`
+  - Design tree is the source of truth for layout; visual editor patches layers via job APIs
+  - Job outputs live under `runs/<jobId>/`
+  - Docs: `docs/AD_TEMPLATE_STUDIO.md`, `HOW_IT_WORKS.md`, `.cursor/skills/design-strategist/`
+
+  ## Non-goals
+
+  - Inventing product facts not provided in the brief
+  - Replacing human brand/legal review for published ads
+  - Full Figma parity in the visual editor (focused layer edit + export)
+
+# Per-artifact rules (optional)
+# rules:
+#   proposal:
+#     - Always include a "Non-goals" section
+#   tasks:
+#     - Break tasks into chunks of max 2 hours
