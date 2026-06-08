@@ -23,6 +23,7 @@ import {
 } from './reconstructionOrchestrator.js'
 import { enhanceReconstructionTree } from './reconstructionEnhance.js'
 import { lockFrameToSource } from './frameLock.js'
+import { shouldSkipCompareLlm } from './comparePolicy.js'
 
 export const DEFAULT_MAX_LOOPS = 10
 export const MAX_LOOPS_CAP = 100
@@ -80,11 +81,12 @@ export async function runAnalyze({
     runVisionAudit: highAccuracy,
     twoStage: highAccuracy,
     layoutMeta: layoutGuess,
+    jobDir: out,
   })
 
   progress('Enhancing layout, typography, backgrounds…')
   tree = lockFrameToSource(tree, srcW, srcH)
-  layoutMeta = classifyAdLayout(tree)
+  layoutMeta = { ...classifyAdLayout(tree), ...(tree._layoutMeta || {}) }
   tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out, layoutMeta })
   tree = sanitizeTreeComposition(tree)
 
@@ -289,12 +291,20 @@ export async function runPipeline({
     runVisionAudit: highAccuracy,
     twoStage: highAccuracy,
     layoutMeta: layoutGuess,
+    jobDir: out,
+    onProgress: (msg) => progress(msg, 0),
   })
 
-  progress('Enhancing layout, typography, backgrounds…', 0)
+  progress('Enhancing layout, product bbox, price banner…', 0)
   tree = lockFrameToSource(tree, srcW, srcH)
-  const layoutMeta = classifyAdLayout(tree)
-  tree = await prepareTree(tree, img, llm, { highAccuracy, ...ctx, jobDir: out, layoutMeta })
+  const layoutMeta = { ...classifyAdLayout(tree), ...(tree._layoutMeta || {}) }
+  tree = await prepareTree(tree, img, llm, {
+    highAccuracy,
+    ...ctx,
+    jobDir: out,
+    layoutMeta,
+    onProgress: (msg) => progress(msg, 0),
+  })
   tree = sanitizeTreeComposition(tree)
 
   const choicesPath = path.join(out, 'design_tree_with_choices.json')
@@ -306,12 +316,13 @@ export async function runPipeline({
     tree = fixReconstructionLayout(tree, layoutOpts(tree))
     tree = enhanceReconstructionTree(tree, { skipReambiguous: true, ...layoutOpts(tree) })
   }
+  progress('Embedding region crops…', 0)
   tree = await embedRasterAssets(tree, img, assetsDir)
 
   const iterations = []
   let bootstrap = null
   if (highAccuracy) {
-    progress('Bootstrap render + compare…', 0)
+    progress('Bootstrap render…', 0)
     const bootBase = 'render_00'
     const boot = await renderToFilesBrowser(tree, out, bootBase, assetsDir)
     let bootPatches = []
@@ -319,7 +330,16 @@ export async function runPipeline({
       const bootScore = await scoreReconstruction(img, boot.png, tree)
       reconstructionScores.push({ phase: 'bootstrap', ...bootScore })
 
-      bootPatches = await compareAndPatch(img, boot.png, tree, llm, { compareDir: out, highAccuracy })
+      if (shouldSkipCompareLlm(bootScore)) {
+        progress(`Bootstrap looks good (${Math.round(bootScore.similarity * 100)}%) — skipping compare.`, 0)
+      } else {
+        progress('Bootstrap compare (vision)…', 0)
+        bootPatches = await compareAndPatch(img, boot.png, tree, llm, {
+          compareDir: out,
+          highAccuracy,
+          score: bootScore,
+        })
+      }
       if (bootPatches.length) {
         tree = applyPatchesSafe(tree, bootPatches)
         tree = enhanceAfterPatch(tree)
@@ -351,13 +371,21 @@ export async function runPipeline({
     const basename = `render_${String(loop).padStart(2, '0')}`
     const { png, html } = await renderToFilesBrowser(tree, out, basename, assetsDir)
 
-    progress(`Comparing images (iteration ${loop})…`, loop)
     let patches = []
     try {
       const loopScore = await scoreReconstruction(img, png, tree)
       reconstructionScores.push({ phase: `loop_${loop}`, ...loopScore })
 
-      patches = await compareAndPatch(img, png, tree, llm, { compareDir: out, highAccuracy })
+      if (shouldSkipCompareLlm(loopScore)) {
+        progress(`Loop ${loop}: ${Math.round(loopScore.similarity * 100)}% match — skipping compare.`, loop)
+      } else {
+        progress(`Comparing images (iteration ${loop}, vision)…`, loop)
+        patches = await compareAndPatch(img, png, tree, llm, {
+          compareDir: out,
+          highAccuracy,
+          score: loopScore,
+        })
+      }
 
       if (!patches.length && loopScore.needsRetry && highAccuracy) {
         progress(`Low similarity (${loopScore.similarity}) — targeted layout retry…`, loop)
@@ -410,7 +438,15 @@ export async function runPipeline({
     const { png, html } = await renderToFilesBrowser(tree, out, 'render_final', assetsDir)
     let polish = []
     try {
-      polish = await compareAndPatch(img, png, tree, llm, { compareDir: out, highAccuracy })
+      const finalScore = await scoreReconstruction(img, png, tree)
+      if (!shouldSkipCompareLlm(finalScore)) {
+        progress('Final polish compare (vision)…', maxLoops)
+        polish = await compareAndPatch(img, png, tree, llm, {
+          compareDir: out,
+          highAccuracy,
+          score: finalScore,
+        })
+      }
       if (polish.length) {
         tree = applyPatchesSafe(tree, polish)
         tree = enhanceAfterPatch(tree)

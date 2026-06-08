@@ -1,0 +1,26 @@
+services:
+  layout-service:
+    build: ./layout-service
+    ports:
+      - "8090:8090"
+    environment:
+      PADDLE_LAYOUT: "0"
+      PADDLE_OCR: "0"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional: enable Paddle layout (large image, GPU recommended)
+  # layout-service-gpu:
+  #   build: ./layout-service
+  #   environment:
+  #     PADDLE_LAYOUT: "1"
+  #     PADDLE_OCR: "1"
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - capabilities: [gpu]

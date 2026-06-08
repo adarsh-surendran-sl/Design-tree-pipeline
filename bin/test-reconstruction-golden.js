@@ -59,10 +59,14 @@ async function run() {
       if (product) assert(product.objectFit === 'contain', `${c.id}: product objectFit must be contain`)
     }
 
-    if (c.id === 'product-hero-vertical') {
+    if (c.id === 'product-hero-vertical' || c.id === 'glycolic-vertical') {
       const price = t.children.find((n) => n.role === 'price')
       assert(price, `${c.id}: price node required`)
       assert((price.x ?? 0) < 200, `${c.id}: price must not be force-centered`)
+      const product = t.children.find((n) => n.role === 'product')
+      if (product) {
+        assert((product.height ?? 0) >= (t.height ?? 0) * 0.25, `${c.id}: product min height`)
+      }
     }
 
     if (c.id === 'price-parallelogram') {

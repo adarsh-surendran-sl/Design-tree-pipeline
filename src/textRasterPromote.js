@@ -1,8 +1,6 @@
-import fs from 'fs'
-import path from 'path'
-import Anthropic from '@anthropic-ai/sdk'
-
 import { RASTER_TYPES } from './capabilities.js'
+import { visionJsonStructured } from './llmClient.js'
+import { TextPromoteJsonSchema } from './llmSchemas.js'
 
 const TEXT_PROMOTE_SYSTEM = `You identify advertisement layers wrongly modeled as image crops that should be editable TEXT (or a button for CTA bars).
 
@@ -63,36 +61,6 @@ export function isLikelyTextRaster(node, tree, { layoutMeta = null } = {}) {
   return inHeaderBand && (wideShort || smallTextStrip)
 }
 
-async function visionJson(prompt, system, imagePath, llm) {
-  const apiKey = llm?.apiKey || process.env.ANTHROPIC_API_KEY
-  const model = llm?.model || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6'
-  if (!apiKey) return { conversions: [] }
-
-  const client = new Anthropic({ apiKey, baseURL: llm?.baseURL })
-  const ext = path.extname(imagePath).toLowerCase()
-  const media = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
-  const data = fs.readFileSync(imagePath).toString('base64')
-
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: media, data } },
-          { type: 'text', text: prompt },
-        ],
-      },
-    ],
-  })
-  const text = resp.content?.find((b) => b.type === 'text')?.text || ''
-  const match = text.match(/\{[\s\S]*\}/)
-  if (!match) return { conversions: [] }
-  return JSON.parse(match[0])
-}
-
 function applyConversion(node, conv, frameW, { layoutPreserving = true } = {}) {
   node.type = conv.type === 'button' ? 'button' : 'text'
   node.renderStrategy = 'primitive'
@@ -139,7 +107,7 @@ export async function promoteTextRasters(tree, imagePath, llm = null, { useVisio
       'Return conversions for nodes that should be text, not image crops.'
 
     try {
-      const data = await visionJson(prompt, TEXT_PROMOTE_SYSTEM, imagePath, llm)
+      const data = await visionJsonStructured(prompt, TEXT_PROMOTE_SYSTEM, [imagePath], TextPromoteJsonSchema, llm)
       for (const conv of data.conversions || []) {
         const node = byId.get(String(conv.element))
         if (!node || !conv.text?.trim()) continue

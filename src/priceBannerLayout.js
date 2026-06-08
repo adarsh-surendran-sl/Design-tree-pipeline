@@ -58,6 +58,25 @@ function applyTreeBox(node, treeBox) {
 /**
  * Snap footer bar, badge, and price text nodes to detected source regions.
  */
+function footerBboxFromLayoutAnalysis(analysis) {
+  const regions = analysis?.regions || []
+  const footer = regions.find((r) => {
+    const role = String(r.role || '').toLowerCase()
+    return role === 'overlay' || role === 'price' || String(r.id || '').includes('price_bar')
+  })
+  if (!footer?.bbox) return null
+  const [x0, y0, x1, y1] = footer.bbox
+  return { left: x0, top: y0, width: x1 - x0, height: y1 - y0 }
+}
+
+function badgeBboxFromLayoutAnalysis(analysis) {
+  const regions = analysis?.regions || []
+  const badge = regions.find((r) => String(r.role || '').toLowerCase() === 'badge')
+  if (!badge?.bbox) return null
+  const [x0, y0, x1, y1] = badge.bbox
+  return { left: x0, top: y0, width: x1 - x0, height: y1 - y0 }
+}
+
 export async function syncPriceBannerLayout(tree, imagePath, layoutMeta = null) {
   if (!isPriceBannerArchetype(layoutMeta)) return tree
 
@@ -66,8 +85,11 @@ export async function syncPriceBannerLayout(tree, imagePath, layoutMeta = null) 
   const srcH = meta.height || tree.height
   if (!srcW || !srcH) return tree
 
-  const footerBbox = await estimateFooterBBox(imagePath)
-  const badgeBbox = await estimateBadgeBBox(imagePath)
+  const analysis = layoutMeta?.layoutAnalysis
+  let footerBbox = analysis ? footerBboxFromLayoutAnalysis(analysis) : null
+  let badgeBbox = analysis ? badgeBboxFromLayoutAnalysis(analysis) : null
+  if (!footerBbox) footerBbox = await estimateFooterBBox(imagePath)
+  if (!badgeBbox) badgeBbox = await estimateBadgeBBox(imagePath)
   if (!footerBbox && !badgeBbox) return tree
 
   const updated = JSON.parse(JSON.stringify(tree))

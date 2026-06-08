@@ -1,53 +1,20 @@
-import fs from 'fs'
-import path from 'path'
-import Anthropic from '@anthropic-ai/sdk'
 import { getImageDimensions } from './assets.js'
 import { sourcePixelsToTreeBox } from './frameLock.js'
 import { estimateProductBBox } from './segmentation.js'
+import { visionJsonStructured } from './llmClient.js'
+import { ProductBboxPatchJsonSchema } from './llmSchemas.js'
+import { segmentProductLayout, isLayoutServiceEnabled } from './layoutClient.js'
 
 const REFINE_SYSTEM = `You refine bounding boxes for ad reconstruction.
-Output ONLY JSON: {"patches":[{"element":"node_id","changes":{"x":0,"y":0,"width":0,"height":0}}]}
 
 Rules:
 - EXPAND the bbox to include the FULL product packshot: cap/lid top to base/shadow bottom.
 - Include full silhouette width; do NOT crop through the label or product body.
 - NEVER shrink the bbox below the current values — only expand or shift to reveal hidden parts.
-- Reject bbox if height < 45% of visible product area or if bbox cuts through the subject.
 - Do NOT include headline text, price banners, footer bars, or badge strips in the product bbox.
 - Preserve original horizontal position — do not center unless product is centered in source.
 - Integer pixels in frame coordinates (same size as user message).
 - Max 3 patches, product node ids only.`
-
-async function visionJson(prompt, system, imagePath, llm) {
-  const apiKey = llm?.apiKey || process.env.ANTHROPIC_API_KEY
-  const model = llm?.model || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6'
-  if (!apiKey) return { patches: [] }
-
-  const client = new Anthropic({ apiKey, baseURL: llm?.baseURL })
-  const ext = path.extname(imagePath).toLowerCase()
-  const media =
-    ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
-  const data = fs.readFileSync(imagePath).toString('base64')
-
-  const resp = await client.messages.create({
-    model,
-    max_tokens: 1024,
-    system,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: media, data } },
-          { type: 'text', text: prompt },
-        ],
-      },
-    ],
-  })
-  const text = resp.content?.find((b) => b.type === 'text')?.text || ''
-  const match = text.match(/\{[\s\S]*\}/)
-  if (!match) return { patches: [] }
-  return JSON.parse(match[0])
-}
 
 function findProductNode(tree) {
   return (tree.children || []).find(
@@ -94,7 +61,45 @@ function applyExpandOnlyPatch(node, changes, { frameH, minHeightRatio = 0.22 }) 
   return true
 }
 
-/** Deterministic guard: expand product bbox using image segmentation when too small. */
+/** Apply layout-service SAM/product segment bbox when available. */
+export async function refineProductBboxFromLayoutService(imagePath, tree) {
+  if (!isLayoutServiceEnabled()) return tree
+  const product = findProductNode(tree)
+  if (!product) return tree
+
+  const [srcW, srcH] = await getImageDimensions(imagePath)
+  const scale = Math.min(srcW / (tree.width || srcW), srcH / (tree.height || srcH))
+  const promptBbox = [
+    Math.round((product.x ?? 0) * scale),
+    Math.round((product.y ?? 0) * scale),
+    Math.round(((product.x ?? 0) + (product.width ?? 0)) * scale),
+    Math.round(((product.y ?? 0) + (product.height ?? 0)) * scale),
+  ]
+
+  const seg = await segmentProductLayout(imagePath, promptBbox)
+  if (!seg?.bbox || seg.bbox.length < 4) return tree
+
+  const updated = JSON.parse(JSON.stringify(tree))
+  const node = updated.children.find((n) => n.id === product.id)
+  if (!node) return tree
+
+  const [x0, y0, x1, y1] = seg.bbox.map(Math.round)
+  const treeBox = sourcePixelsToTreeBox(
+    { left: x0, top: y0, width: x1 - x0, height: y1 - y0 },
+    srcW,
+    srcH,
+    updated,
+  )
+  const merged = unionTreeBoxes(node, treeBox)
+  node.x = merged.x
+  node.y = merged.y
+  node.width = merged.width
+  node.height = merged.height
+  node.objectFit = 'contain'
+  node.segmentationSource = 'layout_sam'
+  return updated
+}
+
 export async function ensureProductBBoxFidelity(tree, imagePath) {
   const product = findProductNode(tree)
   if (!product) return tree
@@ -124,10 +129,13 @@ export async function ensureProductBBoxFidelity(tree, imagePath) {
   return updated
 }
 
-/** Vision pass: expand product crop bbox on the source image (never shrink). */
 export async function refineProductBboxWithVision(imagePath, tree, llm = null) {
   const product = findProductNode(tree)
   if (!product) return tree
+
+  if (product.segmentationSource === 'layout_sam') {
+    return ensureProductBBoxFidelity(tree, imagePath)
+  }
 
   const [imgW, imgH] = await getImageDimensions(imagePath)
   const frameH = tree.height ?? imgH
@@ -137,7 +145,7 @@ export async function refineProductBboxWithVision(imagePath, tree, llm = null) {
     'Return patches to EXPAND the bbox so the full jar/bottle is visible (cap to base shadow). Do NOT shrink.'
 
   try {
-    const data = await visionJson(prompt, REFINE_SYSTEM, imagePath, llm)
+    const data = await visionJsonStructured(prompt, REFINE_SYSTEM, [imagePath], ProductBboxPatchJsonSchema, llm)
     const patches = data?.patches || []
     let updated = JSON.parse(JSON.stringify(tree))
     const node = updated.children.find((n) => n.id === product.id)

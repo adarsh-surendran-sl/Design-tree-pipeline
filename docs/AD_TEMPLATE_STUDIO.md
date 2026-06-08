@@ -300,6 +300,34 @@ runs/<jobId>/
 | Resume loops same error | `pipeline_state.json` `failedStep`; use `force` on resume body |
 | Chat edit no-op | `designId` must match `design_1` etc.; inspect `modifications[].error` in response |
 
+## Image → Tree reconstruction (layout sidecar)
+
+For **Image → Tree** (`/image-to-tree`), geometry comes from a Python **layout-service** when enabled; Claude fills semantics (copy, colors, renderStrategy) only.
+
+```
+Upload → layout-service (bboxes + OCR) → Claude enrich → enhance → render → multi-region compare
+```
+
+| Component | Role |
+|-----------|------|
+| `layout-service/` | FastAPI: `POST /v1/analyze`, `/v1/segment/product`, `/v1/score` |
+| `src/layoutClient.js` | HTTP client; writes `layout_analysis.json` per job |
+| `src/mergeLayoutRegions.js` | Seed regions; OCR text; expand-only product bbox |
+| `src/llmClient.js` | Structured JSON outputs when `ANTHROPIC_USE_STRUCTURED_OUTPUTS=1` |
+| `src/compareRegions.js` | Product/footer/badge compare strips |
+
+**Local dev:** `npm run setup:layout-service` then `npm run layout-service` (uses `python3 -m uvicorn`; Docker: `docker compose up layout-service`).
+
+**When sidecar is down:** Pipeline falls back to Claude two-stage segment + heuristic segmentation (existing behavior).
+
+**Visual editor:** Use when automation cannot fix parallelogram panels or brand fonts — edits patch the same `design_tree_final.json`.
+
+| Variable | Role |
+|----------|------|
+| `LAYOUT_SERVICE_URL` | e.g. `http://localhost:8090` |
+| `LAYOUT_SERVICE_ENABLED` | `1` to require sidecar path when URL set |
+| `RECONSTRUCTION_MULTI_REGION_COMPARE` | Regional compare strips (default on for high accuracy) |
+
 ---
 
 *Repository CLI and Image → Design Tree pipeline are documented separately in the root [README.md](../README.md).*

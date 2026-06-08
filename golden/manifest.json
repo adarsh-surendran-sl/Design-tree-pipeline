@@ -29,6 +29,14 @@
       "expectPatternedBg": false,
       "expectCenteredHeadline": false,
       "expectArchetype": "priceBanner"
+    },
+    {
+      "id": "glycolic-vertical",
+      "tree": "glycolic-vertical/tree.json",
+      "description": "Glycolic vertical product hero — min product bbox, price text",
+      "expectPatternedBg": false,
+      "expectCenteredHeadline": false,
+      "expectArchetype": "productHero"
     }
   ]
 }

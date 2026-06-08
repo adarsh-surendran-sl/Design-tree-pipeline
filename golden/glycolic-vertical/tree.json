@@ -1,0 +1,33 @@
+{
+  "type": "frame",
+  "width": 235,
+  "height": 417,
+  "backgroundColor": "#ffffff",
+  "children": [
+    {
+      "id": "product_jar",
+      "type": "image",
+      "role": "product",
+      "x": 26,
+      "y": 93,
+      "width": 183,
+      "height": 159,
+      "zIndex": 5,
+      "objectFit": "contain"
+    },
+    {
+      "id": "price_text",
+      "type": "text",
+      "role": "price",
+      "text": "₹343.00 onwards",
+      "x": 8,
+      "y": 255,
+      "width": 180,
+      "height": 32,
+      "zIndex": 12,
+      "fontSize": 28,
+      "color": "#111111",
+      "textAlign": "left"
+    }
+  ]
+}

@@ -19,7 +19,13 @@
     "test:ad-template:full": "node bin/test-ad-template.js --full",
     "test:reconstruction-golden": "node bin/test-reconstruction-golden.js",
     "test:product-bbox": "node bin/test-product-bbox.js",
-    "test:design-tree-editor": "node bin/test-design-tree-editor.js"
+    "test:layout-merge": "node bin/test-layout-merge.js",
+    "test:design-tree-editor": "node bin/test-design-tree-editor.js",
+    "benchmark:reconstruction": "node bin/benchmark-reconstruction.js",
+    "check:setup": "node bin/check-setup.js",
+    "test:llm-schemas": "node bin/test-llm-schemas.js",
+    "setup:layout-service": "cd layout-service && python3 -m pip install -r requirements.txt",
+    "layout-service": "cd layout-service && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8090"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.26.0",

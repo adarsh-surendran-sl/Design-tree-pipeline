@@ -3,7 +3,13 @@ import path from 'path'
 
 import { enhanceReconstructionTree } from './reconstructionEnhance.js'
 import { promoteTextRasters } from './textRasterPromote.js'
-import { refineProductBboxWithVision, ensureProductBBoxFidelity } from './productBboxRefine.js'
+import {
+  refineProductBboxWithVision,
+  ensureProductBBoxFidelity,
+  refineProductBboxFromLayoutService,
+} from './productBboxRefine.js'
+import { applyOcrFromLayout, enforceProductBboxFromLayout } from './mergeLayoutRegions.js'
+import { analyzeLayout, isLayoutServiceEnabled } from './layoutClient.js'
 import { refineProductBboxFromSegmentation } from './segmentation.js'
 import { scoreReconstruction, RECONSTRUCTION_SCORE_RETRY } from './reconstructionScore.js'
 import { layoutFinePass, compareAndPatchTargeted } from './llmAgents.js'
@@ -31,7 +37,11 @@ export async function runReconstructionEnhancements(tree, imagePath, llm, option
     publicBaseUrl = null,
     jobId = null,
     layoutMeta = null,
+    onProgress = null,
   } = options
+  const step = (msg) => {
+    if (typeof onProgress === 'function') onProgress(msg)
+  }
 
   let layout = layoutMeta
   if (!layout) layout = classifyAdLayout(tree)
@@ -42,23 +52,58 @@ export async function runReconstructionEnhancements(tree, imagePath, llm, option
   t = fixReconstructionLayout(t, layoutOpts)
 
   if (highAccuracy && imagePath) {
-    t = await promoteTextRasters(t, imagePath, llm, { useVision: true, layoutMeta: layout })
+    const hasOcr = (layout?.layoutAnalysis?.regions || []).some((r) => r.text)
+    if (!hasOcr) {
+      step('Promoting text rasters…')
+      t = await promoteTextRasters(t, imagePath, llm, { useVision: true, layoutMeta: layout })
+    }
     t = fixReconstructionLayout(t, layoutOpts)
   }
 
+  let layoutAnalysis = layout?.layoutAnalysis || null
+  if (!layoutAnalysis && jobDir && isLayoutServiceEnabled()) {
+    const p = path.join(jobDir, 'layout_analysis.json')
+    if (fs.existsSync(p)) {
+      try {
+        layoutAnalysis = JSON.parse(fs.readFileSync(p, 'utf8'))
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  if (!layoutAnalysis && imagePath && isLayoutServiceEnabled()) {
+    layoutAnalysis = await analyzeLayout(imagePath, { jobDir })
+  }
+
+  if (layoutAnalysis) {
+    t = enforceProductBboxFromLayout(t, layoutAnalysis)
+    t = applyOcrFromLayout(t, layoutAnalysis)
+    layout = { ...layout, layoutAnalysis }
+  }
+
   if (highAccuracy) {
+    if (isLayoutServiceEnabled()) {
+      step('Refining product bbox (layout segment)…')
+      t = await refineProductBboxFromLayoutService(imagePath, t)
+    }
+    step('Product segmentation…')
     t = await refineProductBboxFromSegmentation(imagePath, t, {
       tryMcp: Boolean(publicBaseUrl && jobId),
       jobDir,
       publicBaseUrl,
       jobId,
     })
-    t = await refineProductBboxWithVision(imagePath, t, llm)
+    const product = (t.children || []).find((n) => n.role === 'product' || String(n.id || '').includes('product'))
+    if (product?.segmentationSource !== 'layout_sam') {
+      step('Refining product bbox (vision)…')
+      t = await refineProductBboxWithVision(imagePath, t, llm)
+    }
     t = await ensureProductBBoxFidelity(t, imagePath)
   }
 
   if (imagePath) {
-    t = await syncPriceBannerLayout(t, imagePath, layout)
+    step('Syncing price banner layout…')
+    t = await syncPriceBannerLayout(t, imagePath, { ...layout, layoutAnalysis })
     const flat = await isFlatBackground(imagePath)
     t = applyLayerRenderFallback(t, { flatBackground: flat })
   }
@@ -137,7 +182,7 @@ export async function runPostRenderQualityPass({
 export async function prepareTreeWithLayout(tree, imagePath, llm, options = {}) {
   const [srcW, srcH] = await getImageDimensions(imagePath)
   let t = lockFrameToSource(tree, srcW, srcH)
-  const layoutMeta = classifyAdLayout(t)
+  const layoutMeta = options.layoutMeta || classifyAdLayout(t)
   t = await runReconstructionEnhancements(t, imagePath, llm, { ...options, layoutMeta })
   return t
 }

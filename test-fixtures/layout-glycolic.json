@@ -1,0 +1,47 @@
+{
+  "width": 235,
+  "height": 417,
+  "backgroundColor": "#ffffff",
+  "engine": "heuristic",
+  "regions": [
+    {
+      "id": "product_1",
+      "class": "image",
+      "role": "product",
+      "bbox": [26, 93, 209, 252],
+      "confidence": 0.85,
+      "renderStrategy": "crop",
+      "suggestedType": "image"
+    },
+    {
+      "id": "volume_badge",
+      "class": "seal",
+      "role": "badge",
+      "bbox": [164, 222, 235, 248],
+      "confidence": 0.75,
+      "text": "15ml",
+      "renderStrategy": "primitive",
+      "suggestedType": "text"
+    },
+    {
+      "id": "price_bar",
+      "class": "footer",
+      "role": "overlay",
+      "bbox": [0, 250, 235, 275],
+      "confidence": 0.8,
+      "renderStrategy": "primitive",
+      "suggestedType": "shape"
+    },
+    {
+      "id": "price_text",
+      "class": "text",
+      "role": "price",
+      "bbox": [8, 255, 200, 272],
+      "confidence": 0.9,
+      "text": "₹343.00 onwards",
+      "renderStrategy": "primitive",
+      "suggestedType": "text"
+    }
+  ],
+  "reading_order": ["product_1", "volume_badge", "price_bar", "price_text"]
+}

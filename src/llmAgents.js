@@ -1,7 +1,4 @@
-import fs from 'fs'
 import path from 'path'
-import sharp from 'sharp'
-import Anthropic from '@anthropic-ai/sdk'
 
 import { capabilityPromptBlock, heuristicAudit, applyConvertToImage, normalizeTreeStrategies, buildRetryPrompt } from './capabilities.js'
 import { regionsToChildren } from './composition.js'
@@ -10,102 +7,21 @@ import { mergePatches } from './patchUtils.js'
 import { buildCompareStrip, getImageDimensions } from './assets.js'
 import { lockFrameToSource } from './frameLock.js'
 import { classifyAdLayout, archetypePromptSuffix } from './layoutArchetype.js'
-
-function mediaTypeForPath(p) {
-  const ext = path.extname(String(p)).toLowerCase()
-  if (ext === '.png') return 'image/png'
-  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
-  if (ext === '.webp') return 'image/webp'
-  if (ext === '.gif') return 'image/gif'
-  // default fallback
-  return 'image/jpeg'
-}
-
-function readBase64(p) {
-  return fs.readFileSync(p).toString('base64')
-}
-
-function extractJson(text) {
-  let t = String(text ?? '').trim()
-  if (t.startsWith('```')) {
-    t = t.replace(/^```(?:json)?\s*/i, '')
-    t = t.replace(/\s*```$/i, '')
-  }
-  const match = t.match(/(\{[\s\S]*\}|\[[\s\S]*\])/)
-  if (!match) throw new Error('No JSON found in model output')
-  return JSON.parse(match[1])
-}
-
-function claudeTextFromResponse(resp) {
-  const parts = (resp?.content ?? []).filter((b) => b?.type === 'text').map((b) => b.text)
-  if (parts.length) return parts.join('\n')
-  if (resp?.content?.[0]?.text) return resp.content[0].text
-  return ''
-}
-
-function getDefaultClaudeConfig() {
-  return {
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
-    baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
-    maxTokens: process.env.ANTHROPIC_MAX_TOKENS ? Number(process.env.ANTHROPIC_MAX_TOKENS) : 8192,
-  }
-}
-
-function createClaudeClient(llm) {
-  const cfg = llm || getDefaultClaudeConfig()
-  if (!cfg.apiKey) throw new Error('Missing ANTHROPIC_API_KEY (env) or provide llm.apiKey')
-  return {
-    client: new Anthropic({ apiKey: cfg.apiKey, baseURL: cfg.baseURL }),
-    cfg,
-  }
-}
-
-async function visionAask(prompt, system, imagePaths, llm) {
-  const { client, cfg } = createClaudeClient(llm)
-  const paths = imagePaths.map((p) => path.resolve(String(p)))
-
-  const blocks = []
-  for (const p of paths) {
-    const ext = path.extname(p).toLowerCase()
-    if (ext === '.svg') {
-      throw new Error('SVG vision not supported in this JS pipeline. Render SVG to PNG first.')
-    }
-    blocks.push({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: mediaTypeForPath(p),
-        data: readBase64(p),
-      },
-    })
-  }
-  blocks.push({ type: 'text', text: prompt })
-
-  const resp = await client.messages.create({
-    model: cfg.model,
-    max_tokens: cfg.maxTokens,
-    system,
-    messages: [{ role: 'user', content: blocks }],
-  })
-  return claudeTextFromResponse(resp)
-}
-
-async function visionJson(prompt, system, imagePaths, llm) {
-  let extra = ''
-  let lastErr = null
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const rsp = await visionAask(prompt + extra, system, imagePaths, llm)
-    try {
-      return extractJson(rsp)
-    } catch (e) {
-      lastErr = e
-      extra =
-        '\n\nYour previous reply was not valid JSON. Reply with ONLY a single JSON object, no markdown.'
-    }
-  }
-  throw new Error(`Model did not return valid JSON: ${lastErr?.message || lastErr}`)
-}
+import { visionJson, visionJsonStructured, visionDesignTreeJson } from './llmClient.js'
+import {
+  RegionPlanJsonSchema,
+  PatchResponseJsonSchema,
+  AuditRenderJsonSchema,
+} from './llmSchemas.js'
+import { buildRegionalCompareStrips } from './compareRegions.js'
+import { comparePassPlan, shouldSkipCompareLlm } from './comparePolicy.js'
+import { rescalePatchesToSource } from './visionCoords.js'
+import { analyzeLayout } from './layoutClient.js'
+import {
+  mergeLayoutIntoTreePlan,
+  enforceProductBboxFromLayout,
+  applyOcrFromLayout,
+} from './mergeLayoutRegions.js'
 
 function imageToTreeSystem(archetypeSuffix = '') {
   return (
@@ -284,7 +200,7 @@ function mergeFrameFromPlan(target, plan) {
 async function visionAuditRenderStrategy(imagePath, tree, llm) {
   const prompt = `Frame ${tree.width}x${tree.height}px.\nTree:\n${JSON.stringify(tree, null, 2)}\n\nWhich nodes must convert to image crops?`
   try {
-    const data = await visionJson(prompt, AUDIT_RENDER_SYSTEM, [imagePath], llm)
+    const data = await visionJsonStructured(prompt, AUDIT_RENDER_SYSTEM, [imagePath], AuditRenderJsonSchema, llm)
     const ids = data?.convert_to_image || []
     return (Array.isArray(ids) ? ids : []).map(String).filter((id) => (tree.children || []).some((n) => n.id === id))
   } catch {
@@ -292,7 +208,15 @@ async function visionAuditRenderStrategy(imagePath, tree, llm) {
   }
 }
 
-export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoStage = true, layoutMeta = null } = {}) {
+export async function imageToTree(
+  imagePath,
+  llm,
+  { runVisionAudit = true, twoStage = true, layoutMeta = null, jobDir = null, onProgress = null } = {},
+) {
+  const step = (msg) => {
+    if (typeof onProgress === 'function') onProgress(msg)
+  }
+
   const [imgW, imgH] = await getImageDimensions(imagePath)
   const frameDefaults = { width: imgW, height: imgH }
   const archetypeSuffix = layoutMeta?.archetype ? archetypePromptSuffix(layoutMeta.archetype) : ''
@@ -300,14 +224,50 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
     `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
     'Reconstruct this ad for maximum visual fidelity.'
 
+  step('Layout sidecar: detecting regions…')
+  const layoutAnalysis = await analyzeLayout(imagePath, { jobDir })
+  const hasLayoutSeed = Boolean(layoutAnalysis?.regions?.length)
+
   const tree = twoStage
     ? await (async () => {
+        if (hasLayoutSeed) {
+          step('Claude: enriching layout regions (semantics + styles)…')
+          const merged = mergeLayoutIntoTreePlan(layoutAnalysis, frameDefaults)
+          const planJson = JSON.stringify(merged.plan, null, 2)
+          const enrichPrompt =
+            `Frame ${imgW}x${imgH}px.\nLAYOUT ANALYSIS (authoritative bboxes — do NOT shrink product or footer regions):\n${planJson}\n\n` +
+            (archetypeSuffix ? `${archetypeSuffix}\n\n` : '') +
+            `Build the full Design Tree JSON. Keep region ids and bboxes from the plan; add text, colors, renderStrategy, cssBackground, points[] as needed.`
+
+          const enrichData = await visionDesignTreeJson(enrichPrompt, enrichRegionsSystem(), [imagePath], llm)
+          let result = mergeFrameFromPlan(enrichData, merged.plan)
+          if (!result?.children?.length) {
+            result = {
+              type: 'frame',
+              width: imgW,
+              height: imgH,
+              backgroundColor: layoutAnalysis.backgroundColor || '#ffffff',
+              children: merged.children,
+            }
+          }
+          result = enforceProductBboxFromLayout(parseTree(result, frameDefaults), layoutAnalysis)
+          result = applyOcrFromLayout(result, layoutAnalysis)
+          return lockFrameToSource(result, imgW, imgH)
+        }
+
+        step('Claude: segmenting ad into regions…')
         const segPrompt =
           `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
           (archetypeSuffix ? `${archetypeSuffix}\n` : '') +
           'Segment this ad into regions with renderStrategy per capability rules.'
 
-        const segData = await visionJson(segPrompt, regionSegmentSystem(), [imagePath], llm)
+        const segData = await visionJsonStructured(
+          segPrompt,
+          regionSegmentSystem(),
+          [imagePath],
+          RegionPlanJsonSchema,
+          llm,
+        )
         const regions = segData?.regions || []
         if (!regions.length) {
           const system = imageToTreeSystem(archetypeSuffix)
@@ -317,13 +277,14 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
           return lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
         }
 
+        step('Claude: building design tree from regions…')
         const planJson = JSON.stringify(segData, null, 2)
         const enrichPrompt =
           `Frame ${imgW}x${imgH}px.\nREGION PLAN:\n${planJson}\n\n` +
           (archetypeSuffix ? `${archetypeSuffix}\n\n` : '') +
           `Build the full Design Tree JSON with type frame, width ${imgW}, height ${imgH}, backgroundColor, and children[] from this plan and the image.`
 
-        const enrichData = await visionJson(enrichPrompt, enrichRegionsSystem(), [imagePath], llm)
+        const enrichData = await visionDesignTreeJson(enrichPrompt, enrichRegionsSystem(), [imagePath], llm)
         let merged = mergeFrameFromPlan(enrichData, segData)
         if (!merged?.children?.length && regions.length) {
           merged = {
@@ -349,15 +310,21 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
   let refined = tree
   const system = imageToTreeSystem(archetypeSuffix)
   const auditOpts = { skipBackgroundAudit: layoutMeta?.skipBackgroundAudit ?? false }
-  for (let retry = 0; retry < 2; retry += 1) {
-    const issues = heuristicAudit(refined, auditOpts)
-    if (!issues.length) break
-    const prompt = buildRetryPrompt(basePrompt, issues)
-    const data = await visionJson(prompt, system, [imagePath], llm)
-    refined = lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
+  const skipHeuristicRetries = hasLayoutSeed && process.env.RECONSTRUCTION_SKIP_HEURISTIC_RETRY !== '1'
+  if (!skipHeuristicRetries) {
+    for (let retry = 0; retry < 2; retry += 1) {
+      const issues = heuristicAudit(refined, auditOpts)
+      if (!issues.length) break
+      step(`Claude: fixing layout issues (pass ${retry + 1})…`)
+      const prompt = buildRetryPrompt(basePrompt, issues)
+      const data = await visionJson(prompt, system, [imagePath], llm)
+      refined = lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
+    }
   }
 
-  if (runVisionAudit) {
+  const skipVisionAudit = hasLayoutSeed && process.env.RECONSTRUCTION_SKIP_VISION_AUDIT !== '0'
+  if (runVisionAudit && !skipVisionAudit) {
+    step('Claude: audit crop vs primitive…')
     const convertIds = await visionAuditRenderStrategy(imagePath, refined, llm)
     if (convertIds.length) {
       refined = applyConvertToImage(refined, convertIds)
@@ -365,7 +332,11 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
   }
 
   const { promoteTextRasters } = await import('./textRasterPromote.js')
-  refined = await promoteTextRasters(refined, imagePath, llm, { useVision: true })
+  const hasOcrText = (layoutAnalysis?.regions || []).some((r) => r.text && (r.role === 'price' || r.role === 'badge'))
+  if (!hasOcrText) {
+    step('Claude: promoting text layers…')
+    refined = await promoteTextRasters(refined, imagePath, llm, { useVision: true })
+  }
 
   refined = normalizeTreeStrategies(refined)
 
@@ -374,15 +345,32 @@ export async function imageToTree(imagePath, llm, { runVisionAudit = true, twoSt
       `Source image: ${imgW}x${imgH} px. Frame width=${imgW}, height=${imgH}. ` +
       'Return a complete Design Tree with one node per visible region (product, price bar, badges, text). ' +
       'Do NOT use one full-frame image crop. Do NOT invent layers not in the image.'
-    const data = await visionJson(prompt, system, [imagePath], llm)
+    const data = await visionDesignTreeJson(prompt, system, [imagePath], llm)
     refined = lockFrameToSource(parseTree(data, frameDefaults), imgW, imgH)
     refined = normalizeTreeStrategies(refined)
+  }
+
+  if (layoutAnalysis) {
+    refined._layoutMeta = { ...(layoutMeta || {}), layoutAnalysis, archetype: layoutMeta?.archetype }
+  } else if (layoutMeta) {
+    refined._layoutMeta = layoutMeta
   }
 
   return refined
 }
 
-export async function compareAndPatch(originalPath, renderedPath, tree, llm, { compareDir = null, highAccuracy = true } = {}) {
+export async function compareAndPatch(
+  originalPath,
+  renderedPath,
+  tree,
+  llm,
+  { compareDir = null, highAccuracy = true, score = null } = {},
+) {
+  if (shouldSkipCompareLlm(score)) return []
+
+  const plan = comparePassPlan({ highAccuracy, score })
+  if (!plan.main && !plan.regional && !plan.fine) return []
+
   const orig = path.resolve(originalPath)
   const rendered = path.resolve(renderedPath)
   const summary = nodeIdSummary(tree)
@@ -410,16 +398,42 @@ export async function compareAndPatch(originalPath, renderedPath, tree, llm, { c
     }
   }
 
-  const data = await visionJson(prompt, compareSystem(), imagePaths, llm)
-  let patches = mergePatches(parsePatches(data))
+  const [srcW, srcH] = await getImageDimensions(orig)
+  let patches = []
+  if (plan.main) {
+    const data = await visionJsonStructured(prompt, compareSystem(), imagePaths, PatchResponseJsonSchema, llm)
+    patches = rescalePatchesToSource(mergePatches(parsePatches(data)), srcW, srcH, tree)
+  }
 
-  if (highAccuracy && renderedExt !== '.svg' && compareDir) {
+  if (plan.regional && renderedExt !== '.svg' && compareDir) {
+    const regional = await buildRegionalCompareStrips(orig, rendered, tree, compareDir, tree._layoutMeta)
+    if (regional.paths.length) {
+      const regionalPrompt =
+        prompt +
+        `\n\nAdditional images: regional compare panels (${regional.labels.join(', ')}). ` +
+        'Fix mismatches in those regions first (product, footer/price, badge).'
+      const regionalData = await visionJsonStructured(
+        regionalPrompt,
+        compareSystem(),
+        imagePaths.concat(regional.paths),
+        PatchResponseJsonSchema,
+        llm,
+      )
+      patches = mergePatches(
+        patches.concat(rescalePatchesToSource(parsePatches(regionalData), srcW, srcH, tree)),
+      )
+    }
+  }
+
+  if (plan.fine && renderedExt !== '.svg' && compareDir) {
     const strip = path.join(compareDir, '_compare_fine.png')
     await buildCompareStrip(orig, rendered, strip)
     const finePrompt =
       `Frame: ${tree.width}x${tree.height}px.\n` + `Nodes:\n${summary}\n\n` + 'Side-by-side panel attached. Output pixel-level layout patches only.'
-    const fineData = await visionJson(finePrompt, LAYOUT_FINE_SYSTEM, [strip], llm)
-    patches = mergePatches(patches.concat(parsePatches(fineData)))
+    const fineData = await visionJsonStructured(finePrompt, LAYOUT_FINE_SYSTEM, [strip], PatchResponseJsonSchema, llm)
+    patches = mergePatches(
+      patches.concat(rescalePatchesToSource(parsePatches(fineData), srcW, srcH, tree)),
+    )
   }
 
   return patches
@@ -441,8 +455,9 @@ export async function layoutFinePass(originalPath, renderedPath, tree, llm, comp
     'Side-by-side: LEFT=ORIGINAL, RIGHT=RECONSTRUCTION. Output pixel-level layout patches only.'
 
   try {
-    const fineData = await visionJson(finePrompt, LAYOUT_FINE_SYSTEM, [strip], llm)
-    return mergePatches(parsePatches(fineData))
+    const [srcW, srcH] = await getImageDimensions(orig)
+    const fineData = await visionJsonStructured(finePrompt, LAYOUT_FINE_SYSTEM, [strip], PatchResponseJsonSchema, llm)
+    return rescalePatchesToSource(mergePatches(parsePatches(fineData)), srcW, srcH, tree)
   } catch (e) {
     console.warn('layoutFinePass failed:', e?.message || e)
     return []
@@ -471,8 +486,14 @@ export async function compareAndPatchTargeted(
     'Side-by-side: LEFT=ORIGINAL, RIGHT=RECONSTRUCTION.'
 
   try {
-    const data = await visionJson(prompt, TARGETED_COMPARE_SYSTEM, [strip], llm)
-    return mergePatches(parsePatches(data))
+    const [srcW, srcH] = await getImageDimensions(orig)
+    const imagePaths = [strip]
+    if (multiRegionCompareEnabled(true) && compareDir) {
+      const regional = await buildRegionalCompareStrips(orig, rendered, tree, compareDir, tree._layoutMeta)
+      imagePaths.push(...regional.paths)
+    }
+    const data = await visionJsonStructured(prompt, TARGETED_COMPARE_SYSTEM, imagePaths, PatchResponseJsonSchema, llm)
+    return rescalePatchesToSource(mergePatches(parsePatches(data)), srcW, srcH, tree)
   } catch (e) {
     console.warn('compareAndPatchTargeted failed:', e?.message || e)
     return []

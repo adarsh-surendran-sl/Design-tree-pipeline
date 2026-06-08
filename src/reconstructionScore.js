@@ -1,7 +1,8 @@
 import sharp from 'sharp'
 
 import { computeTreeScale } from './frameLock.js'
-import { estimateForegroundBBox } from './segmentation.js'
+import { estimateProductBBox, estimateFooterBBox } from './segmentation.js'
+import { scoreLayoutPair } from './layoutClient.js'
 
 export const RECONSTRUCTION_SCORE_GOOD = 0.82
 export const RECONSTRUCTION_SCORE_RETRY = 0.72
@@ -45,6 +46,16 @@ function findProductNode(tree) {
   )
 }
 
+function findPriceNodes(tree) {
+  return (tree.children || []).filter((n) => {
+    const role = String(n.role || '').toLowerCase()
+    return (
+      n.type === 'text' &&
+      (role === 'price' || (n.text && /₹|\$|€|£|onwards|%/i.test(String(n.text))))
+    )
+  })
+}
+
 function bboxIoU(a, b) {
   const ax2 = a.x + a.width
   const ay2 = a.y + a.height
@@ -57,10 +68,33 @@ function bboxIoU(a, b) {
   return union > 0 ? inter / union : 0
 }
 
+function normalizeText(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function priceTextMatchScore(tree, layoutAnalysis) {
+  if (!tree) return 1
+  const priceNodes = findPriceNodes(tree)
+  if (!priceNodes.length) return 1
+
+  const ocrTexts = (layoutAnalysis?.regions || [])
+    .filter((r) => r.text && (r.role === 'price' || /₹|\$|onwards/i.test(r.text)))
+    .map((r) => normalizeText(r.text))
+
+  if (!ocrTexts.length) return 0.85
+
+  const treeText = normalizeText(priceNodes.map((n) => n.text).join(' '))
+  const matched = ocrTexts.some((t) => treeText.includes(t) || t.includes(treeText))
+  return matched ? 1 : 0.4
+}
+
 /**
  * Composite similarity score with aspect-preserving resize and structural checks.
  */
-export async function scoreReconstruction(originalPath, renderedPath, tree = null) {
+export async function scoreReconstruction(originalPath, renderedPath, tree = null, layoutAnalysis = null) {
   const [oMeta, rMeta] = await Promise.all([sharp(originalPath).metadata(), sharp(renderedPath).metadata()])
   const oW = oMeta.width || 1
   const oH = oMeta.height || 1
@@ -75,14 +109,21 @@ export async function scoreReconstruction(originalPath, renderedPath, tree = nul
 
   const global = maeSimilarity(oBuf, rBuf)
 
-  const aspectMatch = Math.abs(oW / oH - rW / rH) < 0.02 ? 1 : Math.max(0, 1 - Math.abs(oW / oH - rW / rH))
+  let globalPerceptual = global.similarity
+  const sidecarScore = await scoreLayoutPair(originalPath, renderedPath)
+  if (sidecarScore?.similarity != null) {
+    globalPerceptual = sidecarScore.similarity
+  }
+
+  const aspectMatch = Math.abs(oW / oH - rW / rH) < 0.02 ? 1 : Math.max(0, 1 - Math.abs(oW / oH - rW / oH))
 
   let productIoU = 1
+  let footerIoU = 1
   if (tree) {
     const product = findProductNode(tree)
     if (product) {
       try {
-        const seg = await estimateForegroundBBox(originalPath)
+        const seg = await estimateProductBBox(originalPath)
         if (seg) {
           const scale = computeTreeScale(tree, oW, oH)
           const segTree = {
@@ -100,22 +141,63 @@ export async function scoreReconstruction(originalPath, renderedPath, tree = nul
         productIoU = 0.5
       }
     }
+
+    try {
+      const footer = await estimateFooterBBox(originalPath)
+      const footerNode = (tree.children || []).find((n) => {
+        const role = String(n.role || '').toLowerCase()
+        return role === 'overlay' || role === 'price' || String(n.id || '').includes('price_bar')
+      })
+      if (footer && footerNode) {
+        const scale = computeTreeScale(tree, oW, oH)
+        const segTree = {
+          x: Math.round(footer.left / scale),
+          y: Math.round(footer.top / scale),
+          width: Math.max(1, Math.round(footer.width / scale)),
+          height: Math.max(1, Math.round(footer.height / scale)),
+        }
+        footerIoU = bboxIoU(
+          {
+            x: footerNode.x ?? 0,
+            y: footerNode.y ?? 0,
+            width: footerNode.width ?? 1,
+            height: footerNode.height ?? 1,
+          },
+          segTree,
+        )
+      }
+    } catch {
+      footerIoU = 0.85
+    }
   }
 
+  const analysis = layoutAnalysis || tree?._layoutMeta?.layoutAnalysis
+  const priceTextMatch = await priceTextMatchScore(tree, analysis)
+
   const composite =
-    global.similarity * 0.55 + aspectMatch * 0.25 + Math.min(1, productIoU) * 0.2
+    global.similarity * 0.4 +
+    globalPerceptual * 0.15 +
+    aspectMatch * 0.15 +
+    Math.min(1, productIoU) * 0.15 +
+    Math.min(1, footerIoU) * 0.1 +
+    priceTextMatch * 0.05
 
   const needsRetry =
     composite < RECONSTRUCTION_SCORE_RETRY ||
     aspectMatch < 0.9 ||
-    (tree && findProductNode(tree) && productIoU < 0.35)
+    (tree && findProductNode(tree) && productIoU < 0.35) ||
+    (tree && findPriceNodes(tree).length && footerIoU < 0.4) ||
+    priceTextMatch < 0.5
 
   return {
     similarity: Math.round(composite * 1000) / 1000,
     globalSimilarity: global.similarity,
+    globalPerceptual: Math.round(globalPerceptual * 1000) / 1000,
     mae: global.mae,
     aspectMatch: Math.round(aspectMatch * 1000) / 1000,
     productIoU: Math.round(productIoU * 1000) / 1000,
+    footerIoU: Math.round(footerIoU * 1000) / 1000,
+    priceTextMatch: Math.round(priceTextMatch * 1000) / 1000,
     passes: composite >= RECONSTRUCTION_SCORE_GOOD && aspectMatch >= 0.95,
     needsRetry,
   }

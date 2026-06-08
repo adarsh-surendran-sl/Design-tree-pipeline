@@ -55,13 +55,25 @@ async function checkHealth() {
   try {
     const res = await fetch('/api/health')
     const data = await res.json()
-    if (data.ok) {
-      healthEl.textContent = `Ready — ${data.model} · Playwright OK`
+    const tags = []
+    if (data.layoutService) tags.push('layout sidecar')
+    if (data.structuredOutputs) tags.push('structured JSON')
+    if (data.multiRegionCompare) tags.push('multi-region compare')
+    if (data.bgRemovalReady) tags.push('MCP bg removal')
+    else if (data.mcpUiTools && !data.publicBaseUrl) tags.push('bg removal: set PUBLIC_BASE_URL')
+
+    if (data.fullPower) {
+      healthEl.textContent = `Full power — ${data.model} · ${tags.join(' · ')}`
+      healthEl.className = 'health ok'
+    } else if (data.ok) {
+      const hint = data.hints?.[0] || 'Enable layout sidecar + PUBLIC_BASE_URL for full power'
+      healthEl.textContent = `Ready (partial) — ${data.model} · ${tags.join(' · ') || hint}`
       healthEl.className = 'health ok'
     } else {
       const parts = []
       if (!data.anthropicKey) parts.push('ANTHROPIC_API_KEY missing in .env.local')
       if (!data.playwright) parts.push('run npm run setup-browser')
+      if (data.hints?.length) parts.push(...data.hints)
       healthEl.textContent = parts.join(' · ')
       healthEl.className = 'health bad'
     }
@@ -147,9 +159,18 @@ async function exportLayers() {
   window.open(`/api/jobs/${currentJobId}/layers-export?format=md`, '_blank')
 }
 
+let runStartedAt = 0
+
+function formatElapsed() {
+  if (!runStartedAt) return ''
+  const s = Math.round((Date.now() - runStartedAt) / 1000)
+  return s > 0 ? ` (${s}s)` : ''
+}
+
 async function runPipeline() {
   if (!selectedFile) return
 
+  runStartedAt = Date.now()
   runBtn.disabled = true
   rerenderBtn.hidden = true
   logEl.innerHTML = ''
@@ -191,9 +212,13 @@ async function runPipeline() {
       for (const line of lines) {
         if (!line.trim()) continue
         const evt = JSON.parse(line)
-        if (evt.type === 'progress') {
-          setStatus(evt.message)
-          addLog(evt.message)
+        if (evt.type === 'start') {
+          runStartedAt = Date.now()
+          if (evt.jobId) currentJobId = evt.jobId
+        } else if (evt.type === 'progress') {
+          const line = `${evt.message}${formatElapsed()}`
+          setStatus(line)
+          addLog(line)
           setProgress(evt.loop || 0, evt.total || 10)
         } else if (evt.type === 'render' && evt.pngUrl) {
           onRenderImageUpdated(`${evt.pngUrl}?t=${Date.now()}`)

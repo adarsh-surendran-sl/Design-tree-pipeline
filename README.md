@@ -41,7 +41,24 @@ Progress and renders stream live; outputs are saved under `runs/<jobId>/`.
 - **Layout archetypes**: product hero, price banner, typography-led, full-bleed photo — route heuristics and compare focus per ad type
 - **Frame fidelity**: tree dimensions locked to source image; uniform crop scaling
 - **UI**: overlay mode, per-layer x/y/w/h nudges, layer reference export (`layers_reference.md` in job folder)
-- **Tests**: `npm run test:reconstruction-golden` (4 archetypes + frame lock), `npm run test:product-bbox` (vertical product-hero bbox)
+- **Layout sidecar** (optional): Python service for deterministic bboxes + OCR before Claude (`docker compose up layout-service`)
+- **Claude structured outputs**: JSON schema enforcement on region plans, trees, and compare patches
+- **Multi-region compare**: Product / footer / badge compare strips when `RECONSTRUCTION_MULTI_REGION_COMPARE=1`
+- **Tests**: `npm run test:reconstruction-golden`, `npm run test:product-bbox`, `npm run test:layout-merge`
+
+### Layout sidecar (recommended for product-hero ads)
+
+```bash
+# Terminal 1 — heuristic layout engine (Paddle optional via PADDLE_LAYOUT=1)
+docker compose up layout-service
+# or local Python (once): npm run setup:layout-service && npm run layout-service
+
+# .env.local
+LAYOUT_SERVICE_URL=http://localhost:8090
+LAYOUT_SERVICE_ENABLED=1
+```
+
+Then run `npm run ui` as usual. Each job saves `runs/<jobId>/layout_analysis.json` for debugging.
 
 ### Visual editor (Canva-style)
 

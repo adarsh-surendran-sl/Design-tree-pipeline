@@ -28,18 +28,20 @@
 
         <label class="field">
           <span>Max refinement loops</span>
-          <input type="number" id="maxLoops" min="1" max="100" value="10" />
+          <input type="number" id="maxLoops" min="1" max="100" value="5" />
         </label>
 
         <label class="field checkbox">
-          <input type="checkbox" id="analyzeOnly" checked />
-          <span>Identify elements only (faster — edit then re-render)</span>
+          <input type="checkbox" id="analyzeOnly" />
+          <span>Identify elements only (faster — skips compare/render loops)</span>
         </label>
 
         <label class="field checkbox">
           <input type="checkbox" id="highAccuracy" checked />
-          <span>High accuracy mode</span>
+          <span>High accuracy mode (compare loops; ~3–8 min typical)</span>
         </label>
+
+        <p class="hint">Live status updates in the log while Claude runs. First preview often appears after bootstrap render.</p>
 
         <button type="button" id="runBtn" class="primary" disabled>Run</button>
         <p id="status" class="status">Upload an image to start.</p>

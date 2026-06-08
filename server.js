@@ -21,6 +21,9 @@ import {
 } from './src/adTemplatePipeline.js'
 import { loadPipelineState } from './src/pipelineState.js'
 import { checkMcpHealth } from './src/mcpClient.js'
+import { checkLayoutServiceHealth, isLayoutServiceEnabled } from './src/layoutClient.js'
+import { useStructuredOutputs } from './src/llmSchemas.js'
+import { multiRegionCompareEnabled } from './src/compareRegions.js'
 import { downloadImageFromUrl, isValidImageUrl } from './src/imageSources.js'
 import { orchestratorChat, ORCHESTRATOR_WELCOME } from './src/agents/orchestratorAgent.js'
 import {
@@ -133,6 +136,7 @@ function serializeResult(jobId, result, maxLoops) {
 
 function writeNdjson(res, obj) {
   res.write(`${JSON.stringify(obj)}\n`)
+  if (typeof res.flush === 'function') res.flush()
 }
 
 function getPublicBaseUrl() {
@@ -152,13 +156,37 @@ app.get('/api/health', async (_req, res) => {
     playwrightOk = false
   }
   const mcpUiTools = await checkMcpHealth()
+  const publicBaseUrl = getPublicBaseUrl()
+  const layoutEnabled = isLayoutServiceEnabled()
+  const layoutService = layoutEnabled ? await checkLayoutServiceHealth() : false
+  const structuredOutputs = useStructuredOutputs()
+  const multiRegionCompare = multiRegionCompareEnabled(true)
+  const bgRemovalReady = Boolean(mcpUiTools && publicBaseUrl)
+  const fullPower =
+    hasKey &&
+    playwrightOk &&
+    layoutService &&
+    structuredOutputs &&
+    multiRegionCompare
+
   res.json({
     ok: hasKey && playwrightOk,
+    fullPower,
     anthropicKey: hasKey,
     playwright: playwrightOk,
     mcpUiTools,
-    publicBaseUrl: getPublicBaseUrl(),
+    publicBaseUrl: publicBaseUrl || null,
+    bgRemovalReady,
+    layoutEnabled,
+    layoutService,
+    structuredOutputs,
+    multiRegionCompare,
     model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+    hints: [
+      !layoutService && layoutEnabled && 'Start layout sidecar: npm run layout-service',
+      !publicBaseUrl && 'Set PUBLIC_BASE_URL (ngrok http 8787) for MCP background removal',
+      !mcpUiTools && 'MCP ui-tools unreachable — check network or MCP_UI_TOOLS_URL',
+    ].filter(Boolean),
   })
 })
 
